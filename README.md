@@ -5,7 +5,7 @@ Plain HTML, CSS and JavaScript — no build step. **All data stays on your phone
 
 ## Features
 - Multiple accounts (e.g. Savings, Spending) with a starting balance
-- **Transfers** between your own accounts (e.g. salary to a savings account): **⇄ Transfer** on the Accounts screen. A transfer is two linked entries (out of one account, into the other), never counted as spending or income; tap either one in History to edit or delete it. Paying a card bill is a transfer to the card.
+- **Transfers** between your own accounts (e.g. salary to a savings account): **⇄ Transfer** on the Accounts screen. A transfer is two linked entries (out of one account, into the other), never counted as spending or income; tap either one in History to edit or delete it. Paying a card bill is a transfer to the card. Regular transfers (e.g. part of your salary into savings every payday) can be set up under Plan → Recurring → **Transfer**; they're listed with what's due and can be logged in one tap.
 - Credit cards: log purchases on a card, see what you owe, what you spent this month and last, the next due date and available credit. **Pay card bill** moves money from a bank account to the card (not counted as spending). Reconcile a card by typing the amount owed shown by your bank. Set the card's statement closing day and due day so bills are worked out per statement cycle.
 - Log expenses and income: amount, category, date, note (tap an entry to edit or delete it)
 - **Money back**: log refunds, or a friend paying you back for something you paid for, against the spending category it was for (e.g. Food). It goes into the account like income but is taken off that category, so category totals, the pie chart and the forecast show what you spent yourself.

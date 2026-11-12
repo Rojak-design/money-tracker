@@ -519,7 +519,7 @@ function transferSheet(opts = {}) {
   const fromId = out ? out.accountId : opts.fromId;
   const toId = inn ? inn.accountId : opts.toId;
   const amt = out ? out.amount : opts.amount || 0;
-  const userNote = out ? out.userNote || '' : '';
+  const userNote = out ? out.userNote || '' : opts.note || '';
   const withBal = (list) => list.map((a) => `<option value="${a.id}">${a.type === 'credit' ? '💳 ' : ''}${esc(a.name)} · ${a.type === 'credit'
     ? money(Math.max(0, owed(a.id))) + ' owed' : money(balance(a.id))}</option>`).join('');
   openSheet(out ? 'Transfer' : 'Transfer between accounts', `
@@ -1153,7 +1153,8 @@ async function showStorageInfo() {
 }
 
 /* ---------- Start ---------- */
-(async function init() {
+// Start once every script (app.js and plan.js) has loaded — render() uses functions from both.
+async function init() {
   try {
     await load();
   } catch (err) {
@@ -1165,4 +1166,6 @@ async function showStorageInfo() {
   // Ask the browser not to auto-delete our data.
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
-})();
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+else init();
