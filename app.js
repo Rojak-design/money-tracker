@@ -51,6 +51,13 @@ let state = emptyState();
 // Fill in anything added in newer versions of the app.
 function migrate() {
   const base = emptyState();
+  // Each account's starting balance is as of a date; entries before it are history only (already in that balance).
+  for (const a of state.accounts) {
+    if (a.startDate === undefined) {
+      const d = a.createdAt > 1e12 ? new Date(a.createdAt) : null;
+      a.startDate = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '';
+    }
+  }
   state.settings = Object.assign(base.settings, state.settings);
   if (!state.settings.currency) state.settings.currency = 'S$';
   // Older versions stored a single payday; turn it into a payday history.
@@ -134,6 +141,7 @@ function balance(accountId, upToDate) {
   for (const t of state.transactions) {
     if (t.accountId !== accountId) continue;
     if (t.date > until) continue;
+    if (acc.startDate && t.date < acc.startDate) continue; // already included in the starting balance
     total += t.type === 'income' ? t.amount : -t.amount;
   }
   return total;
@@ -279,7 +287,9 @@ function renderTx() {
   for (const t of txs) {
     if (t.date !== lastDate) { html += `<div class="date-head">${niceDate(t.date)}</div>`; lastDate = t.date; }
     const signed = t.type === 'income' ? t.amount : -t.amount;
-    const refundTag = (t.refund ? '<span class="tag">money back</span>' : '') + (t.date > today() ? '<span class="tag planned">planned</span>' : '');
+    const acc = accountById(t.accountId);
+    const refundTag = (t.refund ? '<span class="tag">money back</span>' : '') + (t.date > today() ? '<span class="tag planned">planned</span>' : '')
+      + (acc && acc.startDate && t.date < acc.startDate ? '<span class="tag planned">history only</span>' : '');
     let title = t.category || (t.type === 'income' ? 'Income' : 'Expense');
     let sub = [txFilter === 'all' ? accountName(t.accountId) : '', t.note].filter(Boolean).map(esc).join(' · ');
     if (t.transferId) {
@@ -431,6 +441,10 @@ function accountSheet(id) {
         <input id="accStart" type="number" inputmode="decimal" step="0.01" required placeholder="0.00"
           value="${a ? ((type === 'credit' ? -a.start : a.start) / 100).toFixed(2) : ''}">
       </label>
+      <label><span id="accDateLabel">Balance as of</span>
+        <input id="accStartDate" type="date" value="${a ? a.startDate || '' : today()}">
+      </label>
+      <p class="muted small" style="margin:-8px 0 0">Entries dated before this day (e.g. past trips you add later) are kept for history and charts, but don't change the balance — it already includes them.</p>
       <div id="accCardFields" class="form">
         <label>Pay the bill from
           <select id="accPayFrom"><option value="">—</option>${accountOptions(others)}</select>
@@ -457,7 +471,8 @@ function accountSheet(id) {
     type = t;
     document.querySelectorAll('#accType button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
     $('#accCardFields').classList.toggle('hidden', t !== 'credit');
-    $('#accStartLabel').textContent = t === 'credit' ? 'Amount owed on the card now' : 'Starting balance';
+    $('#accStartLabel').textContent = t === 'credit' ? 'Amount owed on the card' : 'Starting balance';
+    $('#accDateLabel').textContent = t === 'credit' ? 'Owed as of' : 'Balance as of';
     $('#accName').placeholder = t === 'credit' ? 'e.g. Citi Rewards' : 'e.g. Savings';
   }
   document.querySelectorAll('#accType button').forEach((b) => b.addEventListener('click', () => setType(b.dataset.t)));
@@ -478,6 +493,7 @@ function accountSheet(id) {
         dueDay: due >= 1 && due <= 31 ? due : 0, statementDay: stmt >= 1 && stmt <= 31 ? stmt : 0 });
     }
     data.start = start;
+    data.startDate = $('#accStartDate').value || '';
     if (a) Object.assign(a, data);
     else state.accounts.push({ id: uid(), createdAt: Date.now(), ...data });
     await save();
