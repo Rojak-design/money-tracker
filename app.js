@@ -254,6 +254,7 @@ function renderTx() {
     .filter((t) => txFilter === 'all' || t.accountId === txFilter)
     .filter((t) => txCatFilter === 'all' || t.category === txCatFilter)
     .sort((a, b) => (b.date + b.id).localeCompare(a.date + a.id));
+  renderSpendPie();
   const list = $('#txList');
   const totalEl = $('#txTotal');
   if (!txs.length) {
@@ -285,6 +286,98 @@ function renderTx() {
 }
 $('#txFilter').addEventListener('change', (e) => { txFilter = e.target.value; renderTx(); });
 $('#txCatFilter').addEventListener('change', (e) => { txCatFilter = e.target.value; renderTx(); });
+
+/* ---------- Spending by category (pie chart in History) ---------- */
+let piePeriodStart = null; // start date of the period shown; null = the current month / pay cycle
+const PIE_MAX = 5;         // biggest categories shown; the rest go into "Other"
+
+function renderSpendPie() {
+  const el = $('#spendPie');
+  if (txCatFilter !== 'all') { el.classList.add('hidden'); return; } // a single category is shown as a total instead
+  el.classList.remove('hidden');
+  const current = periodContaining(today());
+  const p = piePeriodStart ? periodContaining(piePeriodStart) : current;
+  const isCurrent = p.start === current.start;
+  // Spending = expenses, not counting card payments or transfers. Follows the account filter.
+  const by = {};
+  for (const t of state.transactions) {
+    if (t.type !== 'expense' || t.transferId || t.category === 'Transfer') continue;
+    if (t.date < p.start || t.date > p.end) continue;
+    if (txFilter !== 'all' && t.accountId !== txFilter) continue;
+    by[t.category || 'Other'] = (by[t.category || 'Other'] || 0) + t.amount;
+  }
+  const all = Object.entries(by).sort((a, b) => b[1] - a[1]);
+  const total = all.reduce((s, [, v]) => s + v, 0);
+  let parts = all.slice(0, PIE_MAX).map(([cat, v], i) => ({ cat, v, color: `var(--series-${i + 1})` }));
+  const rest = all.slice(PIE_MAX);
+  if (rest.length) parts.push({ cat: 'Other', v: rest.reduce((s, [, v]) => s + v, 0), color: 'var(--muted)', others: rest.map(([c]) => c) });
+
+  const title = cycleMode() ? (isCurrent ? 'This pay cycle' : 'Pay cycle') : (isCurrent ? 'This month' : 'Month');
+  const range = cycleMode() ? `${shortDate(p.start)} – ${shortDate(p.end)}` : monthLabel(p.start.slice(0, 7), true);
+  let body;
+  if (!total) {
+    body = `<div class="empty" style="padding:18px 10px">No spending logged ${isCurrent ? 'yet in this ' + periodWord() : 'in this ' + periodWord()}.</div>`;
+  } else {
+    // Donut: one arc per part, with a small gap between slices.
+    const R = 72, r = 48, C = 90;
+    const pt = (rad, a) => [C + rad * Math.sin(a), C - rad * Math.cos(a)];
+    let a0 = 0;
+    const gap = parts.length > 1 ? 0.025 : 0;
+    const arcs = parts.map((part, i) => {
+      const sweep = (part.v / total) * Math.PI * 2;
+      const a1 = a0 + sweep;
+      let d;
+      if (parts.length === 1) {
+        d = `M${C} ${C - R}A${R} ${R} 0 1 1 ${C - 0.01} ${C - R}Z M${C} ${C - r}A${r} ${r} 0 1 0 ${C + 0.01} ${C - r}Z`;
+      } else {
+        const s0 = a0 + gap / 2, s1 = Math.max(s0 + 0.001, a1 - gap / 2);
+        const large = s1 - s0 > Math.PI ? 1 : 0;
+        const [x0, y0] = pt(R, s0), [x1, y1] = pt(R, s1), [x2, y2] = pt(r, s1), [x3, y3] = pt(r, s0);
+        d = `M${x0} ${y0}A${R} ${R} 0 ${large} 1 ${x1} ${y1}L${x2} ${y2}A${r} ${r} 0 ${large} 0 ${x3} ${y3}Z`;
+      }
+      a0 = a1;
+      return `<path d="${d}" fill="${part.color}" data-pi="${i}" fill-rule="evenodd"><title>${esc(part.cat)}: ${money(part.v)} (${Math.round(part.v / total * 100)}%)</title></path>`;
+    }).join('');
+    body = `<div class="pie-wrap">
+      <svg viewBox="0 0 180 180" class="pie" role="img" aria-label="Spending by category: ${parts.map((x) => `${esc(x.cat)} ${Math.round(x.v / total * 100)}%`).join(', ')}">
+        ${arcs}
+        <text x="90" y="86" text-anchor="middle" class="pie-total" style="font-size:${Math.min(15, 76 / (money(total).length * 0.58)).toFixed(1)}px">${money(total)}</text>
+        <text x="90" y="104" text-anchor="middle" class="pie-sub">spent</text>
+      </svg>
+      <div class="pie-legend">${parts.map((x, i) => `<button class="pie-row" data-pi="${i}" ${x.others ? '' : `data-cat="${esc(x.cat)}"`}>
+          <i style="background:${x.color}"></i><span class="pc">${esc(x.cat)}${x.others ? ` <span class="muted small">(${x.others.length})</span>` : ''}</span>
+          <span class="pv">${money(x.v)}</span><span class="pp">${Math.round(x.v / total * 100)}%</span></button>`).join('')}
+      </div></div>
+      ${rest.length ? `<p class="muted small" style="margin:8px 0 0">Other: ${rest.map(([c, v]) => `${esc(c)} ${money(v)}`).join(' · ')}</p>` : ''}
+      <p class="muted small" style="margin:8px 0 0">Tap a category to see its transactions. Card payments and transfers aren't counted.</p>`;
+  }
+  el.innerHTML = `<div class="pie-head">
+      <button class="icon-btn" id="pieprev" aria-label="Previous ${periodWord()}">‹</button>
+      <div><div class="title">${title}</div><div class="muted small">${range}${txFilter !== 'all' ? ' · ' + esc(accountName(txFilter)) : ''}</div></div>
+      <button class="icon-btn" id="pienext" aria-label="Next ${periodWord()}" ${isCurrent ? 'disabled' : ''}>›</button>
+    </div>${body}`;
+  $('#pieprev').addEventListener('click', () => { piePeriodStart = prevPeriod(p).start; renderSpendPie(); });
+  $('#pienext').addEventListener('click', () => {
+    const n = nextPeriod(p);
+    piePeriodStart = n.start >= current.start ? null : n.start;
+    renderSpendPie();
+  });
+  // Highlight a slice and its row together; tapping a row filters History to that category.
+  const highlight = (i) => el.querySelectorAll('[data-pi]').forEach((x) => x.classList.toggle('dim', i != null && x.dataset.pi !== String(i)));
+  el.querySelectorAll('path[data-pi]').forEach((x) => {
+    x.addEventListener('mouseenter', () => highlight(x.dataset.pi));
+    x.addEventListener('mouseleave', () => highlight(null));
+    x.addEventListener('click', () => { const row = el.querySelector(`.pie-row[data-pi="${x.dataset.pi}"]`); if (row) row.click(); });
+  });
+  el.querySelectorAll('.pie-row').forEach((x) => {
+    x.addEventListener('mouseenter', () => highlight(x.dataset.pi));
+    x.addEventListener('mouseleave', () => highlight(null));
+    x.addEventListener('click', () => {
+      if (!x.dataset.cat) return toast('“Other” groups the smaller categories listed below the chart');
+      txCatFilter = x.dataset.cat; renderTx(); window.scrollTo(0, 0);
+    });
+  });
+}
 
 /* ---------- Accounts ---------- */
 $('#addAccountBtn').addEventListener('click', () => accountSheet());
