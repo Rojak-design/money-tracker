@@ -275,9 +275,10 @@ function renderTx() {
   for (const t of txs) {
     if (t.date !== lastDate) { html += `<div class="date-head">${niceDate(t.date)}</div>`; lastDate = t.date; }
     const signed = t.type === 'income' ? t.amount : -t.amount;
+    const refundTag = t.refund ? '<span class="tag">money back</span>' : '';
     const sub = [txFilter === 'all' ? accountName(t.accountId) : '', t.note].filter(Boolean).map(esc).join(' · ');
     html += `<button class="item" data-tx="${t.id}">
-      <div class="left"><div class="title">${esc(t.category || (t.type === 'income' ? 'Income' : 'Expense'))}</div>
+      <div class="left"><div class="title">${esc(t.category || (t.type === 'income' ? 'Income' : 'Expense'))}${refundTag}</div>
       ${sub ? `<div class="sub">${t.recurringId ? '🔁 ' : ''}${sub}</div>` : t.recurringId ? '<div class="sub">🔁 Recurring</div>' : ''}</div>
       <div class="amt ${signed < 0 ? 'neg' : 'pos'}">${money(signed, true)}</div></button>`;
   }
@@ -299,14 +300,19 @@ function renderSpendPie() {
   const p = piePeriodStart ? periodContaining(piePeriodStart) : current;
   const isCurrent = p.start === current.start;
   // Spending = expenses, not counting card payments or transfers. Follows the account filter.
+  // Spending = expenses minus money back in the same category (so it shows what you spent yourself).
   const by = {};
+  let backTotal = 0;
   for (const t of state.transactions) {
-    if (t.type !== 'expense' || t.transferId || t.category === 'Transfer') continue;
+    if (t.transferId || t.category === 'Transfer') continue;
+    if (t.type !== 'expense' && !t.refund) continue;
     if (t.date < p.start || t.date > p.end) continue;
     if (txFilter !== 'all' && t.accountId !== txFilter) continue;
-    by[t.category || 'Other'] = (by[t.category || 'Other'] || 0) + t.amount;
+    const c = t.category || 'Other';
+    by[c] = (by[c] || 0) + (t.refund ? -t.amount : t.amount);
+    if (t.refund) backTotal += t.amount;
   }
-  const all = Object.entries(by).sort((a, b) => b[1] - a[1]);
+  const all = Object.entries(by).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
   const total = all.reduce((s, [, v]) => s + v, 0);
   let parts = all.slice(0, PIE_MAX).map(([cat, v], i) => ({ cat, v, color: `var(--series-${i + 1})` }));
   const rest = all.slice(PIE_MAX);
@@ -349,6 +355,7 @@ function renderSpendPie() {
           <span class="pv">${money(x.v)}</span><span class="pp">${Math.round(x.v / total * 100)}%</span></button>`).join('')}
       </div></div>
       ${rest.length ? `<p class="muted small" style="margin:8px 0 0">Other: ${rest.map(([c, v]) => `${esc(c)} ${money(v)}`).join(' · ')}</p>` : ''}
+      ${backTotal ? `<p class="muted small" style="margin:8px 0 0">↩ ${money(backTotal)} of money back has been taken off the categories it was for.</p>` : ''}
       <p class="muted small" style="margin:8px 0 0">Tap a category to see its transactions. Card payments and transfers aren't counted.</p>`;
   }
   el.innerHTML = `<div class="pie-head">
@@ -586,14 +593,18 @@ function txSheet(id, prefill) {
     if (cardTx && accountById(cardTx.accountId)) return payCardSheet(cardTx.accountId, t.transferId);
   }
   const p = t || prefill || {};
-  let type = p.type || 'expense';
+  // In the form, 'refund' (Money back) is its own type; it is saved as income with refund: true.
+  let type = p.refund ? 'refund' : p.type || 'expense';
+  const catType = () => (type === 'income' ? 'income' : 'expense'); // money back uses spending categories
   const defaultAcc = p.accountId || (txFilter !== 'all' ? txFilter : state.accounts[0].id);
   openSheet(t ? 'Edit transaction' : 'Add transaction', `
     <form class="form" id="txForm">
-      <div class="segmented">
+      <div class="segmented tx-types">
         <button type="button" data-type="expense" class="expense">Expense</button>
         <button type="button" data-type="income" class="income">Income</button>
+        <button type="button" data-type="refund" class="refund">Money back</button>
       </div>
+      <p id="txRefundHint" class="muted small hidden" style="margin:-4px 0 0">For refunds, or a friend paying you back for something you paid for. It's added to the account and taken off that category's spending, so the category shows what you spent yourself.</p>
       <label>Amount
         <input id="txAmount" type="number" inputmode="decimal" step="0.01" min="0.01" required placeholder="0.00" value="${p.amount ? (p.amount / 100).toFixed(2) : ''}">
       </label>
@@ -617,7 +628,7 @@ function txSheet(id, prefill) {
 
   const recSel = $('#txRec');
   function fillRecurring(selected) {
-    const recs = state.recurring.filter((r) => r.type === type);
+    const recs = type === 'refund' ? [] : state.recurring.filter((r) => r.type === type);
     $('#txRecWrap').classList.toggle('hidden', !recs.length);
     recSel.innerHTML = `<option value="">No — one-off</option>` +
       recs.map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
@@ -626,13 +637,17 @@ function txSheet(id, prefill) {
   recSel.addEventListener('change', () => {
     const r = state.recurring.find((x) => x.id === recSel.value);
     if (!r) return;
-    setupCatPicker('tx', type, r.category);
+    setupCatPicker('tx', catType(), r.category);
     if (!$('#txAmount').value) $('#txAmount').value = (r.amount / 100).toFixed(2);
   });
   function setType(newType, keepCat) {
     type = newType;
     document.querySelectorAll('#txForm .segmented button').forEach((b) => b.classList.toggle('on', b.dataset.type === type));
-    setupCatPicker('tx', type, keepCat);
+    // Keep the chosen category when switching between Expense and Money back (both use spending categories).
+    const cur = $('#txCat').value;
+    setupCatPicker('tx', catType(), keepCat || (type !== 'income' && cur && cur !== '__new' && categoriesFor('expense').includes(cur) ? cur : undefined));
+    $('#txRefundHint').classList.toggle('hidden', type !== 'refund');
+    $('#txNote').placeholder = type === 'refund' ? 'e.g. Joyce paid me back for Chagee' : 'e.g. Lunch with Sam';
     fillRecurring(p.recurringId);
   }
   document.querySelectorAll('#txForm .segmented button').forEach((b) => b.addEventListener('click', () => setType(b.dataset.type)));
@@ -643,10 +658,10 @@ function txSheet(id, prefill) {
     e.preventDefault();
     const amount = toCents($('#txAmount').value);
     if (!(amount > 0)) return toast('Enter an amount above 0');
-    const category = readCatPicker('tx', type);
+    const category = readCatPicker('tx', catType());
     if (!category) return toast('Type a name for the new category');
     const data = {
-      type, amount, category,
+      type: type === 'refund' ? 'income' : type, refund: type === 'refund' || undefined, amount, category,
       accountId: $('#txAccount').value,
       date: $('#txDate').value || today(),
       note: $('#txNote').value.trim(),
@@ -1012,7 +1027,8 @@ $('#wipeBtn').addEventListener('click', async () => {
 $('#manageCatsBtn').addEventListener('click', () => categoriesSheet('expense'));
 
 function categoriesSheet(type) {
-  const count = (c) => state.transactions.filter((t) => t.type === type && t.category === c).length;
+  const isOfType = (t) => (type === 'expense' ? t.type === 'expense' || t.refund : t.type === 'income' && !t.refund);
+  const count = (c) => state.transactions.filter((t) => isOfType(t) && t.category === c).length;
   openSheet('Categories', `
     <div class="form">
       <div class="segmented">
@@ -1048,7 +1064,7 @@ function categoriesSheet(type) {
     if (!name || name === old) return;
     if (state.categories[type].includes(name)) return toast('That category already exists');
     state.categories[type][+b.dataset.ren] = name;
-    for (const t of state.transactions) if (t.type === type && t.category === old) t.category = name;
+    for (const t of state.transactions) if (isOfType(t) && t.category === old) t.category = name;
     for (const r of state.recurring) if (r.type === type && r.category === old) r.category = name;
     await save(); render(); categoriesSheet(type);
   }));

@@ -498,7 +498,10 @@ function forecast() {
   for (const x of txs) {
     const i = idxOf(x.date);
     if (i < 0) continue;
-    if (x.type === 'income') incSeries[i] += x.amount;
+    if (x.refund) {
+      // Money back reduces that category's spending instead of counting as income.
+      (expSeries[x.category] ||= new Array(n).fill(0))[i] -= x.amount;
+    } else if (x.type === 'income') incSeries[i] += x.amount;
     else {
       (expSeries[x.category] ||= new Array(n).fill(0))[i] += x.amount;
       if (isCard(x.accountId)) (cardTotals[x.category] ||= {})[x.accountId] = ((cardTotals[x.category] || {})[x.accountId] || 0) + x.amount;
