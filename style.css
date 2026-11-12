@@ -265,7 +265,7 @@ label.check input { width: 22px; height: 22px; flex: none; }
 .dv-bar.down { background: var(--series-2); border-radius: 0 0 4px 4px; }
 .grid3 { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 12px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
 .grid3:last-child { border-bottom: 0; }
-.grid3 span:not(:first-child) { text-align: right; font-weight: 600; white-space: nowrap; }
+.grid3 > span:not(:first-child) { text-align: right; font-weight: 600; white-space: nowrap; }
 .grid3.head { color: var(--muted); font-size: 12px; font-weight: 600; }
 .grid3.head span { font-weight: 600; }
 
@@ -295,3 +295,15 @@ label.check input { width: 22px; height: 22px; flex: none; }
 .tag { display: inline-block; font-size: 11px; font-weight: 600; color: var(--primary); background: var(--primary-soft);
   border-radius: 6px; padding: 1px 6px; margin-left: 6px; vertical-align: 2px; }
 .segmented.tx-types button { font-size: 15px; padding: 10px 4px; white-space: nowrap; }
+
+/* Project costs: when needed / instalments */
+.cost-item { display: flex; flex-direction: column; gap: 6px; padding: 8px 0 10px; border-bottom: 1px solid var(--line); }
+.cost-item:last-child { border-bottom: 0; }
+.cost-when { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.cost-when label, .cost-count { font-size: 12px; font-weight: 600; color: var(--muted); gap: 4px; }
+.cost-when input, .cost-when select, .cost-count input { padding: 9px 10px; font-size: 15px; }
+.cost-when select { padding-right: 30px; }
+
+/* Transfers */
+.link-btn { border: 0; background: none; color: var(--primary); font: inherit; font-size: 14px; font-weight: 600; text-align: left; padding: 0; cursor: pointer; }
+#xferForm .swap { align-self: center; font-size: 22px; margin: -8px 0 -10px; color: var(--primary); }
