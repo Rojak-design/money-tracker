@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Money Tracker</title>
+  <meta name="description" content="A simple money tracker that keeps your data on your phone.">
+  <meta name="theme-color" content="#0f766e">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Money">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="viewTitle">Accounts</h1>
+  </header>
+
+  <main>
+    <!-- ACCOUNTS -->
+    <section id="view-accounts" class="view active">
+      <div class="card total-card">
+        <div class="muted">Total of all accounts</div>
+        <div id="totalBalance" class="big">0.00</div>
+      </div>
+      <div id="accountList" class="list"></div>
+      <button class="btn secondary full" id="addAccountBtn">+ New account</button>
+    </section>
+
+    <!-- TRANSACTIONS -->
+    <section id="view-tx" class="view">
+      <div class="row gap">
+        <select id="txFilter" aria-label="Filter by account"></select>
+        <select id="txCatFilter" aria-label="Filter by category"></select>
+      </div>
+      <div id="txTotal" class="card total-line hidden"></div>
+      <div id="txList" class="list"></div>
+    </section>
+
+    <!-- RECONCILE -->
+    <section id="view-recon" class="view">
+      <form id="reconForm" class="card form">
+        <p class="muted small">Check your bank app, take a screenshot, then fill this in.</p>
+        <label>Account
+          <select id="reconAccount" required></select>
+        </label>
+        <label>Date
+          <input type="date" id="reconDate" required>
+        </label>
+        <label>Bank screenshot (optional)
+          <input type="file" id="reconImage" accept="image/*">
+        </label>
+        <img id="reconPreview" class="preview hidden" alt="Screenshot preview">
+        <label>Balance shown in your bank
+          <input type="number" id="reconBank" inputmode="decimal" step="0.01" placeholder="0.00" required>
+        </label>
+        <div class="compare">
+          <div><span class="muted small">App balance</span><strong id="reconApp">0.00</strong></div>
+          <div><span class="muted small">Difference</span><strong id="reconDiff">–</strong></div>
+        </div>
+        <label>Note (optional)
+          <input type="text" id="reconNote" placeholder="e.g. pending card payment">
+        </label>
+        <button class="btn full" type="submit">Save reconciliation</button>
+      </form>
+      <h2 class="section-title">History</h2>
+      <div id="reconList" class="list"></div>
+    </section>
+
+    <!-- PLAN: forecast, recurring payments, savings projects -->
+    <section id="view-plan" class="view">
+      <div class="segmented three" id="planTabs">
+        <button type="button" data-plan="forecast" class="on">Forecast</button>
+        <button type="button" data-plan="recurring">Recurring</button>
+        <button type="button" data-plan="projects">Projects</button>
+      </div>
+      <div id="plan-forecast" class="plan-pane"></div>
+      <div id="plan-recurring" class="plan-pane hidden"></div>
+      <div id="plan-projects" class="plan-pane hidden"></div>
+    </section>
+
+    <!-- BACKUP -->
+    <section id="view-backup" class="view">
+      <div class="card form">
+        <h2>Backup</h2>
+        <p class="muted small">Your data lives only on this phone. Export a backup file regularly and keep it somewhere safe (e.g. email it to yourself or save to Files / Drive).</p>
+        <button class="btn full" id="exportBtn">Export backup</button>
+        <label class="btn secondary full file-btn">Import backup
+          <input type="file" id="importFile" accept=".json,application/json">
+        </label>
+        <p class="muted small">Importing replaces everything currently in the app.</p>
+      </div>
+      <div class="card form">
+        <h2>Settings</h2>
+        <label>Currency symbol
+          <input type="text" id="currencyInput" maxlength="4" placeholder="e.g. $ or £ or RM">
+        </label>
+        <button class="btn secondary full" id="manageCatsBtn">Manage categories</button>
+        <p id="storageInfo" class="muted small"></p>
+      </div>
+      <div class="card form">
+        <h2>Danger zone</h2>
+        <button class="btn danger full" id="wipeBtn">Delete all data</button>
+      </div>
+    </section>
+  </main>
+
+  <button id="fab" class="fab" aria-label="Add transaction">+</button>
+
+  <nav class="tabbar">
+    <button data-view="accounts" class="active"><span>🏦</span>Accounts</button>
+    <button data-view="tx"><span>📋</span>History</button>
+    <button data-view="recon"><span>✅</span>Reconcile</button>
+    <button data-view="plan"><span>📈</span>Plan</button>
+    <button data-view="backup"><span>💾</span>Backup</button>
+  </nav>
+
+  <!-- Bottom sheet for forms -->
+  <div id="sheet" class="sheet hidden" role="dialog" aria-modal="true">
+    <div class="sheet-backdrop" data-close></div>
+    <div class="sheet-panel">
+      <div class="sheet-head">
+        <h2 id="sheetTitle"></h2>
+        <button class="icon-btn" data-close aria-label="Close">✕</button>
+      </div>
+      <div id="sheetBody"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+  <script src="plan.js"></script>
+</body>
+</html>
