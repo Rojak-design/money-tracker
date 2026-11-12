@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-title" content="Money">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <!-- When app files change, bump ?v= here and the version in sw.js so phones load matching files. -->
-  <link rel="stylesheet" href="style.css?v=16">
+  <link rel="stylesheet" href="style.css?v=17">
 </head>
 <body>
   <header class="topbar">
@@ -81,14 +81,16 @@
 
     <!-- PLAN: forecast, recurring payments, savings projects -->
     <section id="view-plan" class="view">
-      <div class="segmented three" id="planTabs">
+      <div class="segmented three four" id="planTabs">
         <button type="button" data-plan="forecast" class="on">Forecast</button>
         <button type="button" data-plan="recurring">Recurring</button>
         <button type="button" data-plan="projects">Projects</button>
+        <button type="button" data-plan="trips">Trips</button>
       </div>
       <div id="plan-forecast" class="plan-pane"></div>
       <div id="plan-recurring" class="plan-pane hidden"></div>
       <div id="plan-projects" class="plan-pane hidden"></div>
+      <div id="plan-trips" class="plan-pane hidden"></div>
     </section>
 
     <!-- BACKUP -->
@@ -149,7 +151,7 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="app.js?v=16"></script>
-  <script src="plan.js?v=16"></script>
+  <script src="app.js?v=17"></script>
+  <script src="plan.js?v=17"></script>
 </body>
 </html>

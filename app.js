@@ -43,6 +43,7 @@ const emptyState = () => ({
   categories: null,    // {expense: [names], income: [names]} — set up on first load
   recurring: [],       // see plan.js
   projects: [],        // see plan.js
+  trips: [],           // {id, country, name, start, end, budget (cents, 0 = use estimate), note}; expenses link with tripId
   settings: { currency: 'S$', fcLookback: 6, fcMethod: 'trend', paydays: [] }
 });
 let state = emptyState();
@@ -62,6 +63,7 @@ function migrate() {
   }
   if (!Array.isArray(state.recurring)) state.recurring = [];
   if (!Array.isArray(state.projects)) state.projects = [];
+  if (!Array.isArray(state.trips)) state.trips = [];
   if (!state.categories) {
     state.categories = {};
     for (const type of ['expense', 'income']) {
@@ -292,7 +294,7 @@ function renderTx() {
     }
     html += `<button class="item" data-tx="${t.id}">
       <div class="left"><div class="title">${esc(title)}${refundTag}</div>
-      ${sub ? `<div class="sub">${t.recurringId ? '🔁 ' : ''}${sub}</div>` : t.recurringId ? '<div class="sub">🔁 Recurring</div>' : ''}</div>
+      ${sub ? `<div class="sub">${t.recurringId ? '🔁 ' : ''}${tripTag(t)}${sub}</div>` : t.recurringId ? '<div class="sub">🔁 Recurring</div>' : tripTag(t) ? `<div class="sub">${tripTag(t)}</div>` : ''}</div>
       <div class="amt ${signed < 0 ? 'neg' : 'pos'}">${money(signed, true)}</div></button>`;
   }
   list.innerHTML = html;
@@ -680,6 +682,10 @@ function txSheet(id, prefill) {
       <label>Date
         <input id="txDate" type="date" required value="${p.date || today()}">
       </label>
+      <label id="txTripWrap" class="hidden">Trip (optional)
+        <select id="txTrip"></select>
+      </label>
+      <p id="txTripHint" class="muted small hidden" style="margin:-8px 0 0"></p>
       <label>Note (optional)
         <input id="txNote" maxlength="100" placeholder="e.g. Lunch with Sam" value="${esc(p.note || '')}">
       </label>
@@ -687,6 +693,27 @@ function txSheet(id, prefill) {
       ${t ? `<button type="button" class="btn danger full" id="txDel">Delete</button>` : ''}
     </form>`);
   $('#txAccount').value = state.accounts.some((a) => a.id === defaultAcc) ? defaultAcc : state.accounts[0].id;
+
+  // Trip: spending can be linked to a trip. New entries dated during a trip are linked to it automatically.
+  const tripSel = $('#txTrip');
+  let tripTouched = !!(t || p.tripId);
+  function fillTrips() {
+    const trips = [...(state.trips || [])].sort((a, b) => b.start.localeCompare(a.start));
+    $('#txTripWrap').classList.toggle('hidden', !trips.length || type === 'income');
+    const cur = tripSel.value || p.tripId || '';
+    tripSel.innerHTML = `<option value="">Not part of a trip</option>` +
+      trips.map((x) => `<option value="${x.id}">✈️ ${esc(tripTitle(x))} · ${shortDate(x.start)} – ${shortDate(x.end)}</option>`).join('');
+    tripSel.value = trips.some((x) => x.id === cur) ? cur : '';
+    if (!tripTouched) {
+      const d = $('#txDate').value;
+      const during = trips.find((x) => d >= x.start && d <= x.end);
+      tripSel.value = during ? during.id : '';
+      $('#txTripHint').textContent = during ? `Linked to your ${tripTitle(during)} trip because of the date — change it if this isn't travel.` : '';
+      $('#txTripHint').classList.toggle('hidden', !during);
+    }
+  }
+  tripSel.addEventListener('change', () => { tripTouched = true; $('#txTripHint').classList.add('hidden'); });
+  $('#txDate').addEventListener('input', fillTrips);
 
   const recSel = $('#txRec');
   function fillRecurring(selected) {
@@ -709,6 +736,7 @@ function txSheet(id, prefill) {
     const cur = $('#txCat').value;
     setupCatPicker('tx', catType(), keepCat || (type !== 'income' && cur && cur !== '__new' && categoriesFor('expense').includes(cur) ? cur : undefined));
     $('#txRefundHint').classList.toggle('hidden', type !== 'refund');
+    fillTrips();
     $('#txNote').placeholder = type === 'refund' ? 'e.g. Joyce paid me back for Chagee' : 'e.g. Lunch with Sam';
     fillRecurring(p.recurringId);
   }
@@ -731,7 +759,8 @@ function txSheet(id, prefill) {
       accountId: $('#txAccount').value,
       date: $('#txDate').value || today(),
       note: $('#txNote').value.trim(),
-      recurringId: recSel.value || undefined
+      recurringId: recSel.value || undefined,
+      tripId: (type !== 'income' && tripSel.value) || undefined
     };
     if (t) Object.assign(t, data);
     else state.transactions.push({ id: uid(), ...data });

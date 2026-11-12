@@ -144,15 +144,17 @@ document.querySelectorAll('#planTabs button').forEach((b) => b.addEventListener(
 
 function renderPlan() {
   document.querySelectorAll('#planTabs button').forEach((b) => b.classList.toggle('on', b.dataset.plan === planTab));
-  ['forecast', 'recurring', 'projects'].forEach((k) => $('#plan-' + k).classList.toggle('hidden', k !== planTab));
+  ['forecast', 'recurring', 'projects', 'trips'].forEach((k) => $('#plan-' + k).classList.toggle('hidden', k !== planTab));
   if (currentView !== 'plan') return;
   if (planTab === 'forecast') renderForecast();
   else if (planTab === 'recurring') renderRecurring();
+  else if (planTab === 'trips') renderTrips();
   else renderProjects();
 }
 
 function planFab() {
   if (planTab === 'projects') projectSheet();
+  else if (planTab === 'trips') tripSheet();
   else recurringSheet();
 }
 
@@ -499,7 +501,7 @@ function cardSpendBetween(id, from, to) {
 
 /* ---------- Forecast ---------- */
 // Day-to-day (non-recurring) history: everything except transfers and transactions linked to a recurring payment.
-const isDayToDay = (t) => !t.recurringId && !t.transferId && t.category !== 'Transfer';
+const isDayToDay = (t) => !t.recurringId && !t.transferId && t.category !== 'Transfer' && !t.tripId;
 
 function forecast() {
   const lookback = state.settings.fcLookback || 6;
@@ -513,7 +515,7 @@ function forecast() {
   const txs = state.transactions.filter((x) => isDayToDay(x) && x.date <= t);
   // Entries logged ahead with a future date (e.g. PayLater instalments) are planned spending/income:
   // added to the period they fall in, on top of the estimate. Recurring-linked ones are covered by the recurring item.
-  const planned = state.transactions.filter((x) => x.date > t && !x.transferId && x.category !== 'Transfer' && !x.recurringId);
+  const planned = state.transactions.filter((x) => x.date > t && !x.transferId && x.category !== 'Transfer' && !x.recurringId && !x.tripId);
   const plannedSum = (from, to, pred = () => true) => planned.filter((x) => x.date >= from && x.date <= to && pred(x))
     .reduce((acc, x) => {
       if (x.type === 'expense') acc.exp += x.amount; else if (x.refund) acc.exp -= x.amount; else acc.inc += x.amount;
@@ -595,8 +597,10 @@ function forecast() {
     const pl = plannedSum(p.start, p.end);
     const cardSpend = rec.filter((x) => x.r.type === 'expense' && isCard(x.r.accountId)).reduce((s, x) => s + x.amount, 0) +
       Math.round(catProj.reduce((s, c, ci) => s + cats[ci].amount * Object.values(c.share).reduce((a, b) => a + b, 0), 0)) + pl.card;
-    const spend = recExp + dayExp + pl.exp;
-    return { ...p, rec, recExp, recInc, cats, dayExp, plannedList: plannedIn(p.start, p.end), plannedExp: pl.exp,
+    const tripList = tripsBetween(p.start, p.end);
+    const tripExp = tripList.reduce((s, x) => s + x.amount, 0);
+    const spend = recExp + dayExp + pl.exp + tripExp;
+    return { ...p, rec, recExp, recInc, cats, dayExp, plannedList: plannedIn(p.start, p.end), plannedExp: pl.exp, tripList, tripExp,
       income: income + pl.inc, spend, net: income + pl.inc - spend, cardSpend, bills: [] };
   });
 
@@ -661,7 +665,7 @@ function forecast() {
   }
   const catNow = {};
   for (const x of logged) {
-    if (x.recurringId || (x.type === 'income' && !x.refund)) continue;
+    if (x.recurringId || x.tripId || (x.type === 'income' && !x.refund)) continue;
     catNow[x.category] = (catNow[x.category] || 0) + (x.refund ? -x.amount : x.amount);
   }
   for (const c of catProj) catNow[c.cat] = (catNow[c.cat] || 0) + c.at(-1) * restDays;
@@ -675,15 +679,21 @@ function forecast() {
   const plNow = plannedSum(tomorrow, current.end);
   restIn += plNow.inc;
   restOut += plNow.exp - plNow.card; // planned card spending leaves the bank when the bill is due
+  // Trips: what's been logged for them this period so far, plus their expected spending in the days left.
+  const tripRest = tripsBetween(tomorrow, current.end);
+  restOut += tripRest.reduce((s, x) => s + x.amount, 0);
+  const tripLoggedNow = tripSpendBetween(current.start, t);
+  const tripListNow = mergeTripLists(tripLoggedNow, tripRest);
+  const tripExpNow = tripListNow.reduce((s, x) => s + x.amount, 0);
   const nowRecExp = recNow.filter((x) => x.r.type === 'expense').reduce((s, x) => s + x.amount, 0);
   const nowRecInc = recNow.filter((x) => x.r.type === 'income').reduce((s, x) => s + x.amount, 0);
   const nowDay = nowCats.reduce((s, c) => s + c.amount, 0);
   const nowIncome = nowRecInc + Math.max(otherIncNow, Math.round(incAvg));
   const nowCardSpend = Math.round(cards.reduce((s, a) => s + cardSpendBetween(a.id, current.start, t), 0) + cardShareRest + cardRest) + plNow.card;
-  const nowSpend = nowRecExp + nowDay + plNow.exp;
+  const nowSpend = nowRecExp + nowDay + plNow.exp + tripExpNow;
   const nowRow = {
     ...current, current: true, short: 'Now', rec: recNow, recExp: nowRecExp, recInc: nowRecInc, cats: nowCats,
-    plannedList: plannedIn(tomorrow, current.end), plannedExp: plNow.exp,
+    plannedList: plannedIn(tomorrow, current.end), plannedExp: plNow.exp, tripList: tripListNow, tripExp: tripExpNow,
     dayExp: nowDay, income: nowIncome + plNow.inc, spend: nowSpend, net: nowIncome + plNow.inc - nowSpend,
     cardSpend: nowCardSpend, bills: nowBills.sort((a, b) => a.due.localeCompare(b.due))
   };
@@ -806,6 +816,7 @@ function renderForecast() {
       r.cats.filter((c) => c.amount > 0).map((c) => line(`${esc(c.cat)} <span class="muted small">(estimate)</span>`, money(c.amount))).join('') +
       (r.plannedList || []).filter((x) => x.type === 'expense' || x.refund).map((x) => line(`📅 ${esc(x.category)}${x.note ? ' · ' + esc(x.note) : ''} <span class="muted small">(${shortDate(x.date)}${isCard(x.accountId) ? ', 💳' : ''})</span>`,
         money(x.refund ? -x.amount : x.amount))).join('') +
+      (r.tripList || []).map((x) => line(`✈️ ${esc(tripTitle(x.trip))} trip <span class="muted small">(${shortDate(x.trip.start)} – ${shortDate(x.trip.end)})</span>`, money(x.amount))).join('') +
       line('Total spending', money(r.spend), 'total') +
       line('Expected income', money(r.income)) +
       line('Left over', `<span class="${r.net < 0 ? 'neg' : 'pos'}">${money(r.net, true)}</span>`, 'total') +
@@ -1228,5 +1239,245 @@ function projectSheet(id) {
     render();
     projectDetail(id2);
     toast('Project saved');
+  });
+}
+
+/* ---------- Trips ----------
+   state.trips: {id, country, name, start, end, budget, note}. Expenses link to a trip with tripId (set in the
+   transaction form; entries dated during a trip are linked automatically). Past trips give a per-day spend and
+   an amount booked ahead (flights, hotels: linked spending dated before the trip), per country. Those are the
+   baseline for estimating future trips, which the forecast then includes on the trip's days. */
+const tripTitle = (x) => (x.name ? `${x.name} (${x.country})` : x.country);
+function tripTag(t) {
+  if (!t.tripId) return '';
+  const x = (state.trips || []).find((y) => y.id === t.tripId);
+  return x ? `✈️ ${esc(x.country)} · ` : '';
+}
+const tripDays = (x) => daysBetween(x.start, x.end) + 1;
+const signedSpend = (t) => (t.type === 'expense' ? t.amount : t.refund ? -t.amount : 0);
+const tripTxs = (x) => state.transactions.filter((t) => t.tripId === x.id && (t.type === 'expense' || t.refund));
+
+// What a trip cost: during it (per day), and booked before or settled after it.
+function tripActuals(x) {
+  let during = 0, ahead = 0;
+  const cats = {};
+  for (const t of tripTxs(x)) {
+    const v = signedSpend(t);
+    if (t.date >= x.start && t.date <= x.end) during += v; else ahead += v;
+    cats[t.category] = (cats[t.category] || 0) + v;
+  }
+  return { during, ahead, total: during + ahead, perDay: during / tripDays(x), cats };
+}
+const tripStatus = (x) => (x.end < today() ? 'past' : x.start > today() ? 'upcoming' : 'now');
+const pastTrips = () => (state.trips || []).filter((x) => tripStatus(x) === 'past' && tripActuals(x).total > 0);
+
+// Baseline from past trips: same country if you've been before, otherwise all past trips.
+function tripBaseline(country) {
+  const all = pastTrips();
+  const same = all.filter((x) => x.country.trim().toLowerCase() === (country || '').trim().toLowerCase());
+  const use = same.length ? same : all;
+  if (!use.length) return null;
+  const days = use.reduce((s, x) => s + tripDays(x), 0);
+  const during = use.reduce((s, x) => s + tripActuals(x).during, 0);
+  const ahead = use.reduce((s, x) => s + tripActuals(x).ahead, 0) / use.length;
+  return { perDay: during / days, ahead, count: use.length, sameCountry: !!same.length };
+}
+function tripEstimate(x) {
+  const b = tripBaseline(x.country);
+  return b ? Math.round(b.ahead + b.perDay * tripDays(x)) : 0;
+}
+const tripBudget = (x) => x.budget || tripEstimate(x);
+
+// Linked spending between two dates, per trip: [{trip, amount}].
+function tripSpendBetween(from, to) {
+  const out = [];
+  for (const x of state.trips || []) {
+    const amount = tripTxs(x).filter((t) => t.date >= from && t.date <= to).reduce((s, t) => s + signedSpend(t), 0);
+    if (amount) out.push({ trip: x, amount });
+  }
+  return out;
+}
+// Expected trip spending between two future dates: planned (future-dated) linked entries, plus whatever is left of
+// the budget spread evenly over the trip's remaining days.
+function tripsBetween(from, to) {
+  const t = today();
+  const out = [];
+  for (const x of state.trips || []) {
+    if (x.end <= t) continue;
+    const linked = tripTxs(x).reduce((s, y) => s + signedSpend(y), 0);
+    let amount = tripTxs(x).filter((y) => y.date > t && y.date >= from && y.date <= to).reduce((s, y) => s + signedSpend(y), 0);
+    const left = Math.max(0, tripBudget(x) - linked);
+    const spreadFrom = [x.start, addDaysISO(t, 1)].sort()[1];
+    const lo = [from, spreadFrom].sort()[1], hi = [to, x.end].sort()[0];
+    if (left && lo <= hi) amount += left * (daysBetween(lo, hi) + 1) / (daysBetween(spreadFrom, x.end) + 1);
+    if (amount) out.push({ trip: x, amount: Math.round(amount) });
+  }
+  return out;
+}
+function mergeTripLists(a, b) {
+  const m = new Map();
+  for (const x of [...a, ...b]) m.set(x.trip.id, { trip: x.trip, amount: (m.get(x.trip.id) || { amount: 0 }).amount + x.amount });
+  return [...m.values()];
+}
+
+function renderTrips() {
+  const el = $('#plan-trips');
+  const trips = [...(state.trips || [])];
+  if (!trips.length) {
+    el.innerHTML = `<div class="empty">No trips yet.<br>Tap + to add a trip — past ones (to see what they cost) or future plans (to budget for them).<br>Spending you log during a trip is linked to it automatically.</div>`;
+    return;
+  }
+  const upcoming = trips.filter((x) => tripStatus(x) !== 'past').sort((a, b) => a.start.localeCompare(b.start));
+  const past = trips.filter((x) => tripStatus(x) === 'past').sort((a, b) => b.start.localeCompare(a.start));
+  const yearAhead = addMonthsISO(today(), 12);
+  const upcomingBudget = upcoming.filter((x) => x.start <= yearAhead).reduce((s, x) => s + tripBudget(x), 0);
+  const all = tripBaseline('');
+  let html = `<div class="tiles">
+    <div class="tile"><div class="label">Upcoming trips, next 12 months</div><div class="value">${money(upcomingBudget)}</div><div class="label">budgeted / estimated</div></div>
+    <div class="tile"><div class="label">Past trips cost</div><div class="value">${all ? money(all.perDay) : '–'}</div><div class="label">a day on average${all ? ` + ${money(all.ahead)} booked ahead` : ''}</div></div>
+  </div>`;
+  const row = (x) => {
+    const a = tripActuals(x);
+    const st = tripStatus(x);
+    let sub;
+    if (st === 'past') sub = a.total ? `spent ${money(a.total)} · ${money(a.perDay)}/day` : 'no spending linked yet';
+    else {
+      const b = tripBudget(x);
+      sub = `${st === 'now' ? '🟢 on now · ' : ''}${x.budget ? 'budget' : b ? 'estimate' : 'no estimate yet'}${b ? ' ' + money(b) : ''}${a.total ? ` · ${money(a.total)} spent so far` : ''}`;
+    }
+    return `<button class="item" data-trip="${x.id}">
+      <div class="left"><div class="title">✈️ ${esc(tripTitle(x))}</div>
+      <div class="sub">${shortDate(x.start)} – ${shortDate(x.end)} ${parseISO(x.end).y} · ${tripDays(x)} day${tripDays(x) > 1 ? 's' : ''} · ${sub}</div></div></button>`;
+  };
+  if (upcoming.length) html += `<h2 class="section-title">Upcoming</h2><div class="list">${upcoming.map(row).join('')}</div>`;
+  if (past.length) html += `<h2 class="section-title">Past</h2><div class="list">${past.map(row).join('')}</div>`;
+
+  // Travel budgets by country, from past trips.
+  const byCountry = {};
+  for (const x of pastTrips()) (byCountry[x.country.trim()] ||= []).push(x);
+  const countries = Object.keys(byCountry).sort();
+  if (countries.length) {
+    html += `<h2 class="section-title">Travel budgets from past trips</h2><div class="card">
+      <div class="grid3 head"><span>Country</span><span>Per day</span><span>Booked ahead</span></div>
+      ${countries.map((c) => { const b = tripBaseline(c); return `<div class="grid3"><span>${esc(c)}<br><span class="muted small">${b.count} trip${b.count > 1 ? 's' : ''}</span></span><span>${money(b.perDay)}</span><span>${money(b.ahead)}</span></div>`; }).join('')}
+      <p class="muted small" style="margin:6px 0 0">"Per day" is spending dated during the trip, divided by its days. "Booked ahead" is spending linked to the trip but dated before or after it (flights, hotels), averaged per trip. New trips to the same country are estimated from these; other countries use the average of all trips.</p>
+    </div>`;
+  }
+  el.innerHTML = html;
+  el.querySelectorAll('[data-trip]').forEach((b) => b.addEventListener('click', () => tripDetail(b.dataset.trip)));
+}
+
+function tripDetail(id) {
+  const x = state.trips.find((y) => y.id === id);
+  if (!x) return;
+  const a = tripActuals(x);
+  const st = tripStatus(x);
+  const b = tripBaseline(x.country);
+  const est = tripEstimate(x);
+  const line = (k, v, cls = '') => `<div class="kv ${cls}"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+  const txs = tripTxs(x).sort((p, q) => p.date.localeCompare(q.date));
+  let plan = '';
+  if (st !== 'past') {
+    plan = `<div class="card-inset">
+      ${x.budget ? line('Your budget', money(x.budget), 'total') : ''}
+      ${est ? line(`Estimate from ${b.sameCountry ? `${b.count} past trip${b.count > 1 ? 's' : ''} to ${esc(x.country)}` : `your ${b.count} past trip${b.count > 1 ? 's' : ''} (no trips to ${esc(x.country)} yet)`}`, money(est), x.budget ? '' : 'total') : ''}
+      ${est ? `<p class="muted small" style="margin:4px 0 0">${money(b.ahead)} booked ahead + ${money(b.perDay)} a day × ${tripDays(x)} days.</p>` : '<p class="muted small" style="margin:0">No past trips with spending yet — set a budget (Edit) so the forecast can include this trip.</p>'}
+      ${a.total ? line('Spent so far', money(a.total)) + line('Left of the ' + (x.budget ? 'budget' : 'estimate'), money(Math.max(0, tripBudget(x) - a.total))) : ''}
+      <p class="muted small" style="margin:6px 0 0">The forecast includes what's left, spread over the trip's days.</p>
+    </div>`;
+  }
+  openSheet(`✈️ ${tripTitle(x)}`, `
+    <div class="form">
+      <div class="muted small">${niceDate(x.start)} – ${niceDate(x.end)} · ${tripDays(x)} day${tripDays(x) > 1 ? 's' : ''}${x.note ? ' · ' + esc(x.note) : ''}</div>
+      ${plan}
+      ${a.total ? `<div class="card-inset">
+        ${line('Spent', money(a.total), 'total')}
+        ${line('During the trip', `${money(a.during)} <span class="muted small">(${money(a.perDay)}/day)</span>`)}
+        ${line('Booked ahead / after', money(a.ahead))}
+        <strong class="small" style="display:block;margin-top:8px">By category</strong>
+        ${Object.entries(a.cats).sort((p, q) => q[1] - p[1]).map(([c, v]) => line(esc(c), money(v))).join('')}
+      </div>` : ''}
+      <button class="btn full" id="trAdd">+ Add spending for this trip</button>
+      ${txs.length ? `<div class="list" style="margin:0">${txs.map((t) => `<button class="item" data-ttx="${t.id}">
+        <div class="left"><div class="title">${esc(t.category)}${t.refund ? '<span class="tag">money back</span>' : ''}</div>
+        <div class="sub">${niceDate(t.date)}${t.note ? ' · ' + esc(t.note) : ''}</div></div>
+        <div class="amt ${t.refund ? 'pos' : 'neg'}">${money(-signedSpend(t), true)}</div></button>`).join('')}</div>` : '<p class="muted small">No spending linked yet. Entries you log with a date during the trip are linked automatically; flights and hotels booked earlier can be linked by picking the trip in the transaction form.</p>'}
+      <button class="btn secondary full" id="trEdit">Edit trip</button>
+      <button class="btn danger full" id="trDel">Delete trip</button>
+    </div>`);
+  $('#trAdd').addEventListener('click', () => {
+    if (!state.accounts.length) return toast('Create an account first');
+    txSheet(null, { type: 'expense', tripId: x.id, date: st === 'upcoming' ? today() : [today(), x.end].sort()[0] });
+  });
+  document.querySelectorAll('[data-ttx]').forEach((el2) => el2.addEventListener('click', () => txSheet(el2.dataset.ttx)));
+  $('#trEdit').addEventListener('click', () => tripSheet(x.id));
+  $('#trDel').addEventListener('click', async () => {
+    if (!confirm(`Delete the ${tripTitle(x)} trip? Its spending stays in History, just not linked to a trip.`)) return;
+    state.trips = state.trips.filter((y) => y.id !== x.id);
+    for (const t of state.transactions) if (t.tripId === x.id) delete t.tripId;
+    await save(); closeSheet(); render(); toast('Trip deleted');
+  });
+}
+
+function tripSheet(id) {
+  const x = (state.trips || []).find((y) => y.id === id);
+  const countries = [...new Set((state.trips || []).map((y) => y.country.trim()))].sort();
+  openSheet(x ? 'Edit trip' : 'New trip', `
+    <form class="form" id="tripForm">
+      <label>Where (country)
+        <input id="trCountry" required maxlength="40" list="trCountries" placeholder="e.g. Japan" value="${esc(x ? x.country : '')}">
+        <datalist id="trCountries">${countries.map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
+      </label>
+      <label>Name (optional)
+        <input id="trName" maxlength="40" placeholder="e.g. Tokyo with friends" value="${esc(x ? x.name || '' : '')}">
+      </label>
+      <div class="controls" style="margin:0">
+        <label>From<input id="trStart" type="date" required value="${x ? x.start : ''}"></label>
+        <label>To<input id="trEnd" type="date" required value="${x ? x.end : ''}"></label>
+      </div>
+      <label>Budget (optional)
+        <input id="trBudget" type="number" inputmode="decimal" step="0.01" min="0" placeholder="Leave empty to use the estimate" value="${x && x.budget ? (x.budget / 100).toFixed(2) : ''}">
+      </label>
+      <div id="trEst" class="card-inset small"></div>
+      <label>Note (optional)
+        <input id="trNote" maxlength="100" value="${esc(x ? x.note || '' : '')}">
+      </label>
+      <button class="btn full" type="submit">Save</button>
+    </form>`);
+  function est() {
+    const f = { country: $('#trCountry').value, start: $('#trStart').value, end: $('#trEnd').value };
+    const box = $('#trEst');
+    if (!f.start || !f.end || f.end < f.start) { box.textContent = 'Pick the dates to see an estimate from your past trips.'; return; }
+    const b = tripBaseline(f.country);
+    if (!b) { box.textContent = `${tripDays(f)} days. No past trips with spending yet, so there's no estimate — add a budget, or log past trips to build one.`; return; }
+    box.innerHTML = `${tripDays(f)} days · estimate <strong>${money(tripEstimate(f))}</strong>: ${money(b.ahead)} booked ahead + ${money(b.perDay)} a day, from ${b.sameCountry
+      ? `${b.count} past trip${b.count > 1 ? 's' : ''} to ${esc(f.country)}` : `all ${b.count} past trip${b.count > 1 ? 's' : ''}`}.`;
+  }
+  $('#tripForm').addEventListener('input', est);
+  est();
+  $('#tripForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const country = $('#trCountry').value.trim();
+    const start = $('#trStart').value, end = $('#trEnd').value;
+    if (!country) return toast('Where are you going?');
+    if (!start || !end) return toast('Pick the dates');
+    if (end < start) return toast('The trip ends before it starts');
+    const budget = toCents($('#trBudget').value || '0');
+    const data = { country, name: $('#trName').value.trim(), start, end, budget: isNaN(budget) ? 0 : budget, note: $('#trNote').value.trim() };
+    let tid = x && x.id;
+    if (x) Object.assign(x, data);
+    else {
+      tid = uid();
+      state.trips.push({ id: tid, ...data });
+      // Link spending already logged during these dates (not recurring payments or transfers).
+      const during = state.transactions.filter((t) => !t.tripId && !t.recurringId && !t.transferId && t.category !== 'Transfer'
+        && (t.type === 'expense' || t.refund) && t.date >= start && t.date <= end);
+      if (during.length && confirm(`Link the ${during.length} expense(s) you've already logged between these dates to this trip?`)) {
+        for (const t of during) t.tripId = tid;
+      }
+    }
+    await save(); render();
+    tripDetail(tid);
+    toast('Trip saved');
   });
 }
