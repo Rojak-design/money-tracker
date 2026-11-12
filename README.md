@@ -5,12 +5,13 @@ Plain HTML, CSS and JavaScript — no build step. **All data stays on your phone
 
 ## Features
 - Multiple accounts (e.g. Savings, Spending) with a starting balance
+- Credit cards: log purchases on a card, see what you owe, what you spent this month and last, the next due date and available credit. **Pay card bill** moves money from a bank account to the card (not counted as spending). Reconcile a card by typing the amount owed shown by your bank.
 - Log expenses and income: amount, category, date, note (tap an entry to edit or delete it)
 - Categories for every transaction, with a category filter in History. Add, rename or remove categories under **Backup → Manage categories**.
 - Daily reconciliation: attach a screenshot of your bank balance, type in the balance shown, and see the difference from the app's balance. Optionally add an adjustment to make them match, and choose which category the adjustment belongs to.
 - **Plan** tab:
   - **Recurring** – instalments, loan repayments, subscriptions, rent, salary… (amount, how often, when it ends). Shows what's due in the next 30 days and how many payments are left. Log a payment from it, or link a transaction to it when adding one.
-  - **Forecast** – the next 12 months of spending: recurring payments plus day-to-day spending (food, transport…) projected from your history, using the trend or the average of the last 3, 6 or 12 months. Tap a month for the breakdown.
+  - **Forecast** – the next 12 months of spending: recurring payments plus day-to-day spending (food, transport…) projected from your history, using the trend or the average of the last 3, 6 or 12 months. Tap a month for the breakdown. If you use credit cards, each month also shows the card bill to pay (last month's card spending) and the cash leaving your bank accounts.
   - **Projects** – save for a house, wedding, etc.: list the expected costs, what's saved (typed in or an account's balance) and how much you save each month, and see how many months it will take and whether you'll make a target date.
 - Export / Import a backup file (includes screenshots)
 - Works offline, has light and dark mode
