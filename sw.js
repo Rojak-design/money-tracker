@@ -1,12 +1,14 @@
 // Service worker: lets the app open with no internet connection.
-// When you change any app file, bump this version number so phones get the update.
-const CACHE = 'money-tracker-v8';
+// When you change any app file, bump this version number AND the ?v= numbers in index.html
+// so phones get the update with all files matching.
+const VERSION = 9;
+const CACHE = 'money-tracker-v' + VERSION;
 const FILES = [
   './',
   './index.html',
-  './style.css',
-  './app.js',
-  './plan.js',
+  './style.css?v=' + VERSION,
+  './app.js?v=' + VERSION,
+  './plan.js?v=' + VERSION,
   './manifest.json',
   './icon.svg',
   './icon-192.png',
@@ -15,7 +17,8 @@ const FILES = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)));
+  // cache: 'reload' skips the browser's HTTP cache so the newest files are stored.
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES.map((f) => new Request(f, { cache: 'reload' })))));
   self.skipWaiting();
 });
 
