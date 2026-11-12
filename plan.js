@@ -1404,14 +1404,19 @@ const tripTxs = (x) => state.transactions.filter((t) => t.tripId === x.id && (t.
 
 // What a trip cost: during it (per day), and booked before or settled after it.
 function tripActuals(x) {
-  let during = 0, ahead = 0;
+  let paidDuring = 0, ahead = 0, back = 0;
   const cats = {};
   for (const t of tripTxs(x)) {
-    const v = signedSpend(t);
-    if (t.date >= x.start && t.date <= x.end) during += v; else ahead += v;
-    cats[t.category] = (cats[t.category] || 0) + v;
+    if (t.refund) back += t.amount;
+    else if (t.date >= x.start && t.date <= x.end) paidDuring += t.amount;
+    else ahead += t.amount;
+    cats[t.category] = (cats[t.category] || 0) + signedSpend(t);
   }
-  return { during, ahead, total: during + ahead, perDay: during / tripDays(x), cats };
+  // Your share during the trip = what you paid during it − money back from others (never below zero).
+  const during = Math.max(0, paidDuring - back);
+  const backLeft = Math.max(0, back - paidDuring); // more back than spent during: take the rest off what was booked ahead
+  const aheadNet = Math.max(0, ahead - backLeft);
+  return { paid: paidDuring + ahead, back, paidDuring, during, ahead: aheadNet, total: during + aheadNet, perDay: during / tripDays(x), cats };
 }
 const tripStatus = (x) => (x.end < today() ? 'past' : x.start > today() ? 'upcoming' : 'now');
 const pastTrips = () => (state.trips || []).filter((x) => tripStatus(x) === 'past' && tripActuals(x).total > 0);
@@ -1485,7 +1490,7 @@ function renderTrips() {
     const a = tripActuals(x);
     const st = tripStatus(x);
     let sub;
-    if (st === 'past') sub = a.total ? `spent ${money(a.total)} · ${money(a.perDay)}/day` : 'no spending linked yet';
+    if (st === 'past') sub = a.total ? `your share ${money(a.total)} · ${money(a.perDay)}/day${a.back ? ` (after ${money(a.back)} back)` : ''}` : 'no spending linked yet';
     else {
       const b = tripBudget(x);
       sub = `${st === 'now' ? '🟢 on now · ' : ''}${x.budget ? 'budget' : b ? 'estimate' : 'no estimate yet'}${b ? ' ' + money(b) : ''}${a.total ? ` · ${money(a.total)} spent so far` : ''}`;
@@ -1536,13 +1541,18 @@ function tripDetail(id) {
       <div class="muted small">${niceDate(x.start)} – ${niceDate(x.end)} · ${tripDays(x)} day${tripDays(x) > 1 ? 's' : ''}${x.note ? ' · ' + esc(x.note) : ''}</div>
       ${plan}
       ${a.total ? `<div class="card-inset">
-        ${line('Spent', money(a.total), 'total')}
+        ${a.back ? line('You paid', money(a.paid)) + line('Money back from others', `<span class="pos">−${money(a.back)}</span>`) : ''}
+        ${line(a.back ? 'Your share' : 'Spent', money(a.total), 'total')}
         ${line('During the trip', `${money(a.during)} <span class="muted small">(${money(a.perDay)}/day)</span>`)}
-        ${line('Booked ahead / after', money(a.ahead))}
-        <strong class="small" style="display:block;margin-top:8px">By category</strong>
+        ${line('Booked ahead', money(a.ahead))}
+        ${a.back ? '<p class="muted small" style="margin:4px 0 0">Money back is taken off the spending during the trip, so the per-day figure (used to estimate future trips) is your own share.</p>' : ''}
+        <strong class="small" style="display:block;margin-top:8px">By category${a.back ? ' (after money back)' : ''}</strong>
         ${Object.entries(a.cats).sort((p, q) => q[1] - p[1]).map(([c, v]) => line(esc(c), money(v))).join('')}
       </div>` : ''}
-      <button class="btn full" id="trAdd">+ Add spending for this trip</button>
+      <div class="btn-row">
+        <button class="btn" id="trAdd">+ Spending</button>
+        <button class="btn secondary" id="trBack">+ Money back</button>
+      </div>
       ${txs.length ? `<div class="list" style="margin:0">${txs.map((t) => `<button class="item" data-ttx="${t.id}">
         <div class="left"><div class="title">${esc(t.category)}${t.refund ? '<span class="tag">money back</span>' : ''}</div>
         <div class="sub">${niceDate(t.date)}${t.note ? ' · ' + esc(t.note) : ''}</div></div>
@@ -1550,6 +1560,10 @@ function tripDetail(id) {
       <button class="btn secondary full" id="trEdit">Edit trip</button>
       <button class="btn danger full" id="trDel">Delete trip</button>
     </div>`);
+  $('#trBack').addEventListener('click', () => {
+    if (!state.accounts.length) return toast('Create an account first');
+    txSheet(null, { type: 'income', refund: true, tripId: x.id, date: today(), category: 'Food', note: `Money back for ${tripTitle(x)} trip` });
+  });
   $('#trAdd').addEventListener('click', () => {
     if (!state.accounts.length) return toast('Create an account first');
     txSheet(null, { type: 'expense', tripId: x.id, date: st === 'upcoming' ? today() : [today(), x.end].sort()[0] });
