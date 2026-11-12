@@ -276,19 +276,38 @@ function recurringSheet(id) {
 /* ---------- Salary cycles ---------- */
 // With a payday set, a "period" runs from one payday to the day before the next.
 // Without one, periods are calendar months.
-const cycleMode = () => !!state.settings.payday;
+// state.settings.paydays is a payday history, oldest first: [{from: 'YYYY-MM-DD' | '', payday: 1-31 | 'last', payWeekend}].
+// Each rule covers paydays from its `from` date up to the day before the next rule's `from`, so past cycles
+// keep the payday that applied at the time.
+const paydayRules = () => state.settings.paydays || [];
+const cycleMode = () => paydayRules().length > 0;
+const currentPayRule = () => paydayRules()[paydayRules().length - 1];
 
-// The payday in a given month (m is 1-12), moved back to Friday if it falls on a weekend and that option is on.
-function paydayIn(y, m) {
-  const pd = state.settings.payday;
-  const d = pd === 'last' ? daysInMonth(y, m) : Math.min(+pd, daysInMonth(y, m));
+// The payday a rule gives in a month (m is 1-12), moved back to Friday if it falls on a weekend and that option is on.
+function paydayByRule(rule, y, m) {
+  const d = rule.payday === 'last' ? daysInMonth(y, m) : Math.min(+rule.payday, daysInMonth(y, m));
   let iso = isoOf(y, m, d);
-  if (state.settings.payWeekend) {
+  if (rule.payWeekend) {
     const wd = new Date(y, m - 1, d).getDay();
     if (wd === 6) iso = addDaysISO(iso, -1);
     if (wd === 0) iso = addDaysISO(iso, -2);
   }
   return iso;
+}
+// All paydays from a few months before to a few months after a date, sorted.
+function paydaysNear(iso) {
+  const rules = paydayRules();
+  const { y, m } = parseISO(iso);
+  const out = new Set();
+  for (let k = -3; k <= 3; k++) {
+    const mo = parseISO(addMonthsISO(isoOf(y, m, 1), k));
+    rules.forEach((r, i) => {
+      const p = paydayByRule(r, mo.y, mo.m);
+      const next = rules[i + 1];
+      if ((!r.from || p >= r.from) && (!next || p < next.from)) out.add(p);
+    });
+  }
+  return [...out].sort();
 }
 const shortDate = (iso) => { const { y, m, d } = parseISO(iso); return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
 function daysBetween(a, b) { const A = parseISO(a), B = parseISO(b); return Math.round((new Date(B.y, B.m - 1, B.d) - new Date(A.y, A.m - 1, A.d)) / 864e5); }
@@ -305,8 +324,7 @@ function makePeriod(start, end) {
 function periodContaining(iso) {
   const { y, m } = parseISO(iso);
   if (!cycleMode()) return makePeriod(isoOf(y, m, 1), isoOf(y, m, daysInMonth(y, m)));
-  const months = [-1, 0, 1, 2].map((k) => parseISO(addMonthsISO(isoOf(y, m, 1), k)));
-  const pays = months.map((x) => paydayIn(x.y, x.m));
+  const pays = paydaysNear(iso);
   const i = pays.filter((p) => p <= iso).length - 1;
   return makePeriod(pays[i], addDaysISO(pays[i + 1], -1));
 }
@@ -362,13 +380,10 @@ function forecast() {
     if (!hist.length) { hist = [current]; partial = true; }
   }
   // When only the current (unfinished) period is available, it is used (scaled up to a full period).
-  // Periods that were only partly logged are scaled up to a full period.
+  // Spending is projected as a daily rate, so short, long and partly-logged periods all count fairly.
   const loggedFrom = partial ? [current.start, first].sort()[1] : null;
-  const scales = hist.map((p) => {
-    const from = [p.start, first].sort()[1];
-    const to = partial ? t : p.end;
-    return p.days / (daysBetween(from, to) + 1);
-  });
+  const loggedDays = hist.map((p) => daysBetween([p.start, first].sort()[1], partial ? t : p.end) + 1);
+  const AVG_DAYS = 30.44; // used to show "per month / per pay cycle" figures
 
   const n = hist.length;
   const idxOf = (date) => hist.findIndex((p) => date >= p.start && date <= p.end);
@@ -387,9 +402,10 @@ function forecast() {
   const cards = cardAccounts();
   const hasCards = cards.length > 0;
 
-  // Projection for one category: average, optionally tilted by a least-squares trend line.
+  // Projection for one category's daily rate: average, optionally tilted by a least-squares trend line.
+  // at(j) is the daily rate in future period j (0 = next period, -1 = the current one).
   function project(series) {
-    const s = series.map((v, i) => v * scales[i]);
+    const s = series.map((v, i) => v / loggedDays[i]);
     const avg = s.reduce((a, b) => a + b, 0) / n;
     if (method !== 'trend' || n < 3) return { avg, at: () => avg, slope: 0 };
     const xm = (n - 1) / 2;
@@ -406,9 +422,10 @@ function forecast() {
     for (const c of cards) share[c.id] = ((cardTotals[cat] || {})[c.id] || 0) / total;
     return { cat, ...project(series), share };
   }).filter((c) => c.avg > 0).sort((a, b) => b.avg - a.avg);
-  // Income comes in lumps (e.g. salary on payday), so it isn't scaled: average the fully-logged periods only.
-  const fullIdx = scales.map((v, i) => i).filter((i) => scales[i] === 1);
-  const incIdx = fullIdx.length ? fullIdx : scales.map((v, i) => i);
+  // Income comes in lumps (e.g. salary on payday), so it is averaged per period, using only fully-logged
+  // periods of a normal length (not the short or long cycle around a payday change).
+  const fullIdx = hist.map((p, i) => i).filter((i) => loggedDays[i] === hist[i].days && hist[i].days >= 26 && hist[i].days <= 35);
+  const incIdx = fullIdx.length ? fullIdx : hist.map((p, i) => i);
   const incAvg = incIdx.length ? incIdx.reduce((a, i) => a + incSeries[i], 0) / incIdx.length : 0;
 
   const rows = periods.map((p, j) => {
@@ -419,7 +436,7 @@ function forecast() {
     }
     const recExp = rec.filter((x) => x.r.type === 'expense').reduce((s, x) => s + x.amount, 0);
     const recInc = rec.filter((x) => x.r.type === 'income').reduce((s, x) => s + x.amount, 0);
-    const cats = catProj.map((c) => ({ cat: c.cat, amount: Math.round(c.at(j)) }));
+    const cats = catProj.map((c) => ({ cat: c.cat, amount: Math.round(c.at(j) * p.days) }));
     const dayExp = cats.reduce((s, c) => s + c.amount, 0);
     const income = recInc + Math.round(incAvg);
     const cardSpend = rec.filter((x) => x.r.type === 'expense' && isCard(x.r.accountId)).reduce((s, x) => s + x.amount, 0) +
@@ -433,7 +450,7 @@ function forecast() {
     const rowIdx = (date) => periods.findIndex((p) => date >= p.start && date <= p.end);
     for (const a of cards) {
       // Projected day-to-day card spending per day for each period.
-      const rate = all.map((p, k) => catProj.reduce((s, c) => s + c.at(k - 1) * (c.share[a.id] || 0), 0) / p.days);
+      const rate = all.map((p, k) => catProj.reduce((s, c) => s + c.at(k - 1) * (c.share[a.id] || 0), 0));
       const projected = (from, to) => {
         let sum = 0;
         for (let k = 0; k < all.length; k++) {
@@ -460,7 +477,7 @@ function forecast() {
       r.cashOut = r.spend - r.cardSpend + r.cardBill;
     });
   }
-  return { rows, catProj, hist, partial, loggedFrom, incAvg, n, method, lookback, hasCards, current };
+  return { rows, catProj, hist, partial, loggedFrom, AVG_DAYS, incAvg, n, method, lookback, hasCards, current };
 }
 
 let fcSelected = 0;
@@ -483,9 +500,9 @@ function renderForecast() {
   const basis = !f.n ? 'No day-to-day spending logged yet — forecast uses recurring payments only.'
     : f.partial ? `Based on ${daysBetween(f.loggedFrom, today()) + 1} days of this ${word} (scaled up to a full ${word}). It gets more accurate once you have a full ${word} of data.`
       : `Based on ${f.n} ${word}${f.n > 1 ? 's' : ''} of history (${shortDate(f.hist[0].start)} ${parseISO(f.hist[0].start).y} – ${shortDate(f.hist[f.n - 1].end)} ${parseISO(f.hist[f.n - 1].end).y}).`;
-  const payday = state.settings.payday;
+  const rule = currentPayRule();
   const cycleNote = cycleMode()
-    ? `Each bar is one pay cycle (payday ${payday === 'last' ? 'on the last day of the month' : `on the ${ordinal(+payday)}`} up to the day before the next payday), labelled by the month most of it falls in.`
+    ? `Each bar is one pay cycle (payday ${payRuleText(rule)} up to the day before the next payday), labelled by the month most of it falls in.${paydayRules().length > 1 ? ' Past cycles use the payday you had at the time.' : ''}`
     : 'Each bar is a calendar month. Set your payday under Backup → Settings to see pay cycles instead.';
 
   let html = `
@@ -522,11 +539,12 @@ function renderForecast() {
     html += `<h2 class="section-title">Day-to-day spending by category</h2><div class="card">
       <div class="kv"><span class="k small">Category (per ${word})</span><span class="v small muted">Avg so far → next ${word}</span></div>` +
       f.catProj.map((c) => {
-        const next = c.at(0);
-        const ch = c.avg ? (next - c.avg) / c.avg : 0;
+        // Shown per average-length month / pay cycle so the arrow isn't affected by cycle length.
+        const avg = c.avg * f.AVG_DAYS, next = c.at(0) * f.AVG_DAYS;
+        const ch = avg ? (next - avg) / avg : 0;
         const arrow = Math.abs(ch) < 0.03 ? '<span class="muted">→ steady</span>'
           : ch > 0 ? `<span class="trend-up">↑ ${Math.round(ch * 100)}%</span>` : `<span class="trend-down">↓ ${Math.round(-ch * 100)}%</span>`;
-        return `<div class="kv"><span class="k">${esc(c.cat)}</span><span class="v">${money(c.avg)} → ${money(next)} ${f.method === 'trend' ? arrow : ''}</span></div>`;
+        return `<div class="kv"><span class="k">${esc(c.cat)}</span><span class="v">${money(avg)} → ${money(next)} ${f.method === 'trend' ? arrow : ''}</span></div>`;
       }).join('') + `</div>`;
   }
 
@@ -572,6 +590,8 @@ function renderForecast() {
   showMonth(fcSelected);
 }
 
+const payRuleText = (r) => (r.payday === 'last' ? 'on the last day of the month' : `on the ${ordinal(+r.payday)}`) +
+  (r.payWeekend ? ' (Friday before if on a weekend)' : '');
 const ordinal = (n) => n + (n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th');
 
 // Compact axis label, e.g. 1500000 cents -> "15k".

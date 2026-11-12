@@ -43,7 +43,7 @@ const emptyState = () => ({
   categories: null,    // {expense: [names], income: [names]} — set up on first load
   recurring: [],       // see plan.js
   projects: [],        // see plan.js
-  settings: { currency: 'S$', fcLookback: 6, fcMethod: 'trend', payday: 0, payWeekend: false }
+  settings: { currency: 'S$', fcLookback: 6, fcMethod: 'trend', paydays: [] }
 });
 let state = emptyState();
 
@@ -52,6 +52,14 @@ function migrate() {
   const base = emptyState();
   state.settings = Object.assign(base.settings, state.settings);
   if (!state.settings.currency) state.settings.currency = 'S$';
+  // Older versions stored a single payday; turn it into a payday history.
+  if (!Array.isArray(state.settings.paydays) || ('payday' in state.settings)) {
+    if (!Array.isArray(state.settings.paydays)) state.settings.paydays = [];
+    if (state.settings.payday && !state.settings.paydays.length) {
+      state.settings.paydays.push({ from: '', payday: state.settings.payday, payWeekend: !!state.settings.payWeekend });
+    }
+    delete state.settings.payday; delete state.settings.payWeekend;
+  }
   if (!Array.isArray(state.recurring)) state.recurring = [];
   if (!Array.isArray(state.projects)) state.projects = [];
   if (!state.categories) {
@@ -795,27 +803,88 @@ $('#importFile').addEventListener('change', async (e) => {
   }
 });
 
+const paydayOptions = (withNone) => (withNone ? `<option value="0">Not set — use calendar months</option>` : '') +
+  Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${ordinal(i + 1)} of the month</option>`).join('') +
+  `<option value="last">Last day of the month</option>`;
+const readPayday = (v) => (v === 'last' ? 'last' : +v);
+
 function renderPaySettings() {
   const sel = $('#paydayInput');
-  if (!sel.options.length) {
-    sel.innerHTML = `<option value="0">Not set — use calendar months</option>` +
-      Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${ordinal(i + 1)} of the month</option>`).join('') +
-      `<option value="last">Last day of the month</option>`;
-  }
-  sel.value = String(state.settings.payday || 0);
-  $('#payWeekendInput').checked = !!state.settings.payWeekend;
-  $('#payWeekendWrap').classList.toggle('hidden', !state.settings.payday);
+  if (!sel.options.length) sel.innerHTML = paydayOptions(true);
+  const rules = paydayRules();
+  const cur = currentPayRule();
+  sel.value = cur ? String(cur.payday) : '0';
+  $('#payWeekendInput').checked = !!(cur && cur.payWeekend);
+  $('#payWeekendWrap').classList.toggle('hidden', !cur);
+  $('#payChangeBtn').classList.toggle('hidden', !cur);
+  $('#payHistory').innerHTML = rules.length > 1 ? `<div class="card-inset">
+      <strong class="small">Payday history</strong>
+      ${rules.map((r, i) => {
+        const until = rules[i + 1] ? addDaysISO(rules[i + 1].from, -1) : null;
+        const when = !r.from ? (until ? `Until ${shortDate(until)} ${parseISO(until).y}` : '')
+          : until ? `${shortDate(r.from)} ${parseISO(r.from).y} – ${shortDate(until)} ${parseISO(until).y}` : `From ${shortDate(r.from)} ${parseISO(r.from).y}`;
+        return `<div class="pay-row"><div><div class="muted small">${when}</div>
+          <div>${payRuleText(r).replace(/^on the /, '')}</div></div>
+          ${i === rules.length - 1 ? `<button type="button" class="icon-btn" id="payUndo" aria-label="Remove this payday change">🗑️</button>` : ''}</div>`;
+      }).join('')}
+    </div>` : '';
+  const undo = $('#payUndo');
+  if (undo) undo.addEventListener('click', async () => {
+    if (!confirm('Remove the latest payday change? The payday before it will apply from then on.')) return;
+    state.settings.paydays.pop();
+    await save(); render(); toast('Payday change removed');
+  });
 }
+// Changing the select edits the current payday (it doesn't start a new one — use "I changed jobs" for that).
 $('#paydayInput').addEventListener('change', async (e) => {
-  const v = e.target.value;
-  state.settings.payday = v === 'last' ? 'last' : +v;
+  const v = readPayday(e.target.value);
+  const rules = state.settings.paydays;
+  if (!v) {
+    if (rules.length > 1 && !confirm('Stop using pay cycles? This also clears your payday history.')) { renderPaySettings(); return; }
+    state.settings.paydays = [];
+  } else if (!rules.length) rules.push({ from: '', payday: v, payWeekend: false });
+  else rules[rules.length - 1].payday = v;
   await save(); render();
-  toast(state.settings.payday ? 'Payday saved — charts now use pay cycles' : 'Using calendar months');
+  toast(v ? 'Payday saved — charts now use pay cycles' : 'Using calendar months');
 });
 $('#payWeekendInput').addEventListener('change', async (e) => {
-  state.settings.payWeekend = e.target.checked;
+  const cur = currentPayRule();
+  if (!cur) return;
+  cur.payWeekend = e.target.checked;
   await save(); render();
 });
+$('#payChangeBtn').addEventListener('click', () => payChangeSheet());
+
+// A new payday that starts on a date (e.g. after changing jobs). Earlier cycles keep the old payday.
+function payChangeSheet() {
+  const cur = currentPayRule();
+  openSheet('New payday', `
+    <form class="form" id="payChangeForm">
+      <p class="muted small" style="margin:0">Your payday is currently ${payRuleText(cur)}. Pay cycles before the new first payday keep the old payday, so your history stays as it was.</p>
+      <label>First payday on the new schedule
+        <input type="date" id="pcFrom" required>
+      </label>
+      <label>New payday
+        <select id="pcDay">${paydayOptions(false)}</select>
+      </label>
+      <label class="check"><input type="checkbox" id="pcWeekend"> If payday falls on a weekend, I'm paid on the Friday before</label>
+      <p class="muted small" style="margin:0">The cycle around the change will be shorter or longer than usual. If your salary is set up under Plan → Recurring, end the old one and add the new one there too.</p>
+      <button class="btn full" type="submit">Save new payday</button>
+    </form>`);
+  $('#pcDay').value = String(cur.payday);
+  $('#pcWeekend').checked = !!cur.payWeekend;
+  $('#payChangeForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const from = $('#pcFrom').value;
+    const rules = state.settings.paydays;
+    const prevFrom = rules[rules.length - 1].from;
+    if (!from) return toast('Pick the first payday on the new schedule');
+    if (prevFrom && from <= prevFrom) return toast(`It must be after your last payday change (${shortDate(prevFrom)})`);
+    rules.push({ from, payday: readPayday($('#pcDay').value), payWeekend: $('#pcWeekend').checked });
+    await save(); closeSheet(); render();
+    toast('New payday saved');
+  });
+}
 
 $('#currencyInput').addEventListener('change', async (e) => {
   state.settings.currency = e.target.value.trim();
