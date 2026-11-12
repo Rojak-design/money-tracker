@@ -273,6 +273,72 @@ function recurringSheet(id) {
   }
 }
 
+/* ---------- Salary cycles ---------- */
+// With a payday set, a "period" runs from one payday to the day before the next.
+// Without one, periods are calendar months.
+const cycleMode = () => !!state.settings.payday;
+
+// The payday in a given month (m is 1-12), moved back to Friday if it falls on a weekend and that option is on.
+function paydayIn(y, m) {
+  const pd = state.settings.payday;
+  const d = pd === 'last' ? daysInMonth(y, m) : Math.min(+pd, daysInMonth(y, m));
+  let iso = isoOf(y, m, d);
+  if (state.settings.payWeekend) {
+    const wd = new Date(y, m - 1, d).getDay();
+    if (wd === 6) iso = addDaysISO(iso, -1);
+    if (wd === 0) iso = addDaysISO(iso, -2);
+  }
+  return iso;
+}
+const shortDate = (iso) => { const { y, m, d } = parseISO(iso); return new Date(y, m - 1, d).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
+function daysBetween(a, b) { const A = parseISO(a), B = parseISO(b); return Math.round((new Date(B.y, B.m - 1, B.d) - new Date(A.y, A.m - 1, A.d)) / 864e5); }
+
+function makePeriod(start, end) {
+  const mid = parseISO(addDaysISO(start, 14)); // label a cycle by the month most of it falls in
+  const key = isoOf(mid.y, mid.m, 1).slice(0, 7);
+  return {
+    start, end, days: daysBetween(start, end) + 1,
+    short: monthLabel(key).slice(0, 3),
+    label: cycleMode() ? `${shortDate(start)} – ${shortDate(end)} ${parseISO(end).y}` : monthLabel(key, true)
+  };
+}
+function periodContaining(iso) {
+  const { y, m } = parseISO(iso);
+  if (!cycleMode()) return makePeriod(isoOf(y, m, 1), isoOf(y, m, daysInMonth(y, m)));
+  const months = [-1, 0, 1, 2].map((k) => parseISO(addMonthsISO(isoOf(y, m, 1), k)));
+  const pays = months.map((x) => paydayIn(x.y, x.m));
+  const i = pays.filter((p) => p <= iso).length - 1;
+  return makePeriod(pays[i], addDaysISO(pays[i + 1], -1));
+}
+const nextPeriod = (p) => periodContaining(addDaysISO(p.end, 1));
+const prevPeriod = (p) => periodContaining(addDaysISO(p.start, -1));
+const periodWord = () => (cycleMode() ? 'pay cycle' : 'month');
+
+/* ---------- Credit card statement cycles ---------- */
+// Statement closes on statementDay (default: last day of the month); the bill is due on dueDay after that
+// (default: 3 weeks after the statement).
+function cardStatementIn(a, y, m) { return isoOf(y, m, Math.min(a.statementDay || 31, daysInMonth(y, m))); }
+function cardDueFor(a, stmt) {
+  if (!a.dueDay) return addDaysISO(stmt, 21);
+  const { y, m, d } = parseISO(stmt);
+  if (a.dueDay > d) return isoOf(y, m, Math.min(a.dueDay, daysInMonth(y, m)));
+  const n = parseISO(addMonthsISO(isoOf(y, m, 1), 1));
+  return isoOf(n.y, n.m, Math.min(a.dueDay, daysInMonth(n.y, n.m)));
+}
+// The statement period that a date falls in: {from, to (statement date), due}.
+function cardStatementWindow(a, iso) {
+  const { y, m } = parseISO(iso);
+  let s = cardStatementIn(a, y, m);
+  if (iso > s) { const n = parseISO(addMonthsISO(isoOf(y, m, 1), 1)); s = cardStatementIn(a, n.y, n.m); }
+  const p = parseISO(addMonthsISO(s.slice(0, 8) + '01', -1));
+  return { from: addDaysISO(cardStatementIn(a, p.y, p.m), 1), to: s, due: cardDueFor(a, s) };
+}
+// Actual spending on a card between two dates (card payments not counted, refunds subtracted).
+function cardSpendBetween(id, from, to) {
+  return state.transactions.filter((t) => t.accountId === id && !t.transferId && t.date >= from && t.date <= to)
+    .reduce((s, t) => s + (t.type === 'expense' ? t.amount : -t.amount), 0);
+}
+
 /* ---------- Forecast ---------- */
 // Day-to-day (non-recurring) history: everything except transfers and transactions linked to a recurring payment.
 const isDayToDay = (t) => !t.recurringId && !t.transferId && t.category !== 'Transfer';
@@ -281,64 +347,74 @@ function forecast() {
   const lookback = state.settings.fcLookback || 6;
   const method = state.settings.fcMethod || 'trend';
   const t = today();
-  const thisMonth = monthKey(t);
-  const months = Array.from({ length: 12 }, (_, i) => addMonthsKey(thisMonth, i + 1));
+  const current = periodContaining(t);
+  const periods = [];
+  for (let p = nextPeriod(current); periods.length < 12; p = nextPeriod(p)) periods.push(p);
 
-  // History window: complete months only (not the current one).
+  // History: complete periods only (not the current one), back to the first logged transaction.
   const txs = state.transactions.filter(isDayToDay);
-  const firstMonth = txs.length ? txs.map((x) => monthKey(x.date)).sort()[0] : null;
-  let histMonths = [];
+  const first = txs.length ? txs.map((x) => x.date).sort()[0] : null;
+  let hist = [];
   let partial = false;
-  if (firstMonth) {
-    const from = [addMonthsKey(thisMonth, -lookback), firstMonth].sort()[1];
-    for (let k = from; k < thisMonth; k = addMonthsKey(k, 1)) histMonths.push(k);
-    if (!histMonths.length) { histMonths = [thisMonth]; partial = true; }
+  if (first) {
+    // Use a partly-logged first period only if at least half of it was logged (it gets scaled up below).
+    for (let p = prevPeriod(current); hist.length < lookback && daysBetween([p.start, first].sort()[1], p.end) + 1 >= p.days / 2; p = prevPeriod(p)) hist.unshift(p);
+    if (!hist.length) { hist = [current]; partial = true; }
   }
-  // When only the current (unfinished) month is available, scale it up to a full month.
-  const { y, m, d } = parseISO(t);
-  const scale = partial ? daysInMonth(y, m) / d : 1;
+  // When only the current (unfinished) period is available, it is used (scaled up to a full period).
+  // Periods that were only partly logged are scaled up to a full period.
+  const loggedFrom = partial ? [current.start, first].sort()[1] : null;
+  const scales = hist.map((p) => {
+    const from = [p.start, first].sort()[1];
+    const to = partial ? t : p.end;
+    return p.days / (daysBetween(from, to) + 1);
+  });
 
-  const n = histMonths.length;
-  const idx = Object.fromEntries(histMonths.map((k, i) => [k, i]));
-  const expSeries = {}; // category -> [cents per month]
-  const cardTotals = {}; // category -> cents spent on credit cards in the window
+  const n = hist.length;
+  const idxOf = (date) => hist.findIndex((p) => date >= p.start && date <= p.end);
+  const expSeries = {}; // category -> [cents per period]
+  const cardTotals = {}; // category -> {cardId: cents}
   const incSeries = new Array(n).fill(0);
   for (const x of txs) {
-    const i = idx[monthKey(x.date)];
-    if (i === undefined) continue;
+    const i = idxOf(x.date);
+    if (i < 0) continue;
     if (x.type === 'income') incSeries[i] += x.amount;
     else {
       (expSeries[x.category] ||= new Array(n).fill(0))[i] += x.amount;
-      if (isCard(x.accountId)) cardTotals[x.category] = (cardTotals[x.category] || 0) + x.amount;
+      if (isCard(x.accountId)) (cardTotals[x.category] ||= {})[x.accountId] = ((cardTotals[x.category] || {})[x.accountId] || 0) + x.amount;
     }
   }
-  const hasCards = cardAccounts().length > 0;
+  const cards = cardAccounts();
+  const hasCards = cards.length > 0;
 
   // Projection for one category: average, optionally tilted by a least-squares trend line.
   function project(series) {
-    const s = series.map((v) => v * scale);
+    const s = series.map((v, i) => v * scales[i]);
     const avg = s.reduce((a, b) => a + b, 0) / n;
     if (method !== 'trend' || n < 3) return { avg, at: () => avg, slope: 0 };
     const xm = (n - 1) / 2;
     let num = 0, den = 0;
     s.forEach((v, i) => { num += (i - xm) * (v - avg); den += (i - xm) ** 2; });
     const slope = den ? num / den : 0;
-    // Future month j (0 = next month) sits at x = n + 1 + j (x = n is the current month).
+    // Future period j (0 = next period) sits at x = n + 1 + j; the current period is j = -1.
     const at = (j) => Math.min(2 * avg, Math.max(0, avg + slope * (n + 1 + j - xm)));
     return { avg, at, slope };
   }
-  const catProj = Object.entries(expSeries).map(([cat, series]) => ({
-    cat, ...project(series),
-    cardShare: (cardTotals[cat] || 0) / Math.max(1, series.reduce((a, b) => a + b, 0)) }))
-    .filter((c) => c.avg > 0).sort((a, b) => b.avg - a.avg);
-  const incAvg = n ? incSeries.reduce((a, b) => a + b, 0) * scale / n : 0;
+  const catProj = Object.entries(expSeries).map(([cat, series]) => {
+    const total = Math.max(1, series.reduce((a, b) => a + b, 0));
+    const share = {};
+    for (const c of cards) share[c.id] = ((cardTotals[cat] || {})[c.id] || 0) / total;
+    return { cat, ...project(series), share };
+  }).filter((c) => c.avg > 0).sort((a, b) => b.avg - a.avg);
+  // Income comes in lumps (e.g. salary on payday), so it isn't scaled: average the fully-logged periods only.
+  const fullIdx = scales.map((v, i) => i).filter((i) => scales[i] === 1);
+  const incIdx = fullIdx.length ? fullIdx : scales.map((v, i) => i);
+  const incAvg = incIdx.length ? incIdx.reduce((a, i) => a + incSeries[i], 0) / incIdx.length : 0;
 
-  const rows = months.map((key, j) => {
-    const from = key + '-01';
-    const to = key + '-' + pad2(daysInMonth(...Object.values(parseISO(from)).slice(0, 2)));
+  const rows = periods.map((p, j) => {
     const rec = [];
     for (const r of state.recurring) {
-      const count = occurrences(r, from, to).length;
+      const count = occurrences(r, p.start, p.end).length;
       if (count) rec.push({ r, amount: r.amount * count, count });
     }
     const recExp = rec.filter((x) => x.r.type === 'expense').reduce((s, x) => s + x.amount, 0);
@@ -346,19 +422,45 @@ function forecast() {
     const cats = catProj.map((c) => ({ cat: c.cat, amount: Math.round(c.at(j)) }));
     const dayExp = cats.reduce((s, c) => s + c.amount, 0);
     const income = recInc + Math.round(incAvg);
-    // Spending put on credit cards this month — paid from the bank next month.
     const cardSpend = rec.filter((x) => x.r.type === 'expense' && isCard(x.r.accountId)).reduce((s, x) => s + x.amount, 0) +
-      Math.round(catProj.reduce((s, c, ci) => s + cats[ci].amount * c.cardShare, 0));
-    return { key, rec, recExp, recInc, cats, dayExp, income, spend: recExp + dayExp, net: income - recExp - dayExp, cardSpend };
+      Math.round(catProj.reduce((s, c, ci) => s + cats[ci].amount * Object.values(c.share).reduce((a, b) => a + b, 0), 0));
+    return { ...p, rec, recExp, recInc, cats, dayExp, income, spend: recExp + dayExp, net: income - recExp - dayExp, cardSpend, bills: [] };
   });
-  // Cash leaving the bank accounts: non-card spending this month + last month's card bill.
-  // The first bill is what's owed on the cards today.
-  const owedNow = cardAccounts().reduce((s, a) => s + Math.max(0, owed(a.id)), 0);
-  rows.forEach((r, j) => {
-    r.cardBill = j === 0 ? owedNow : rows[j - 1].cardSpend;
-    r.cashOut = r.spend - r.cardSpend + r.cardBill;
-  });
-  return { rows, catProj, histMonths, partial, incAvg, n, method, lookback, hasCards, owedNow };
+
+  // Card bills: each statement's spending (actual up to today, projected after), due on the card's due date.
+  if (hasCards) {
+    const all = [current, ...periods];
+    const rowIdx = (date) => periods.findIndex((p) => date >= p.start && date <= p.end);
+    for (const a of cards) {
+      // Projected day-to-day card spending per day for each period.
+      const rate = all.map((p, k) => catProj.reduce((s, c) => s + c.at(k - 1) * (c.share[a.id] || 0), 0) / p.days);
+      const projected = (from, to) => {
+        let sum = 0;
+        for (let k = 0; k < all.length; k++) {
+          const lo = [from, all[k].start].sort()[1], hi = [to, all[k].end].sort()[0];
+          if (lo <= hi) sum += rate[k] * (daysBetween(lo, hi) + 1);
+        }
+        for (const r of state.recurring) {
+          if (r.type === 'expense' && r.accountId === a.id) sum += occurrences(r, from, to).length * r.amount;
+        }
+        return sum;
+      };
+      let w = cardStatementWindow(a, addDaysISO(t, -62));
+      for (let guard = 0; guard < 20 && w.from <= periods[11].end; guard++, w = cardStatementWindow(a, addDaysISO(w.to, 1))) {
+        const i = rowIdx(w.due);
+        if (i < 0) continue;
+        const actual = cardSpendBetween(a.id, w.from, [w.to, t].sort()[0]);
+        const proj = w.to > t ? projected([w.from, addDaysISO(t, 1)].sort()[1], w.to) : 0;
+        const amount = Math.max(0, Math.round(actual + proj));
+        if (amount) rows[i].bills.push({ card: a, from: w.from, to: w.to, due: w.due, amount, estimated: w.to > t });
+      }
+    }
+    rows.forEach((r) => {
+      r.cardBill = r.bills.reduce((s, b) => s + b.amount, 0);
+      r.cashOut = r.spend - r.cardSpend + r.cardBill;
+    });
+  }
+  return { rows, catProj, hist, partial, loggedFrom, incAvg, n, method, lookback, hasCards, current };
 }
 
 let fcSelected = 0;
@@ -367,8 +469,9 @@ function renderForecast() {
   const el = $('#plan-forecast');
   const f = forecast();
   const { rows } = f;
+  const word = periodWord();
   if (!f.n && !state.recurring.length) {
-    el.innerHTML = `<div class="empty">Nothing to forecast yet.<br>Log some spending (History) or add recurring payments, and your 12-month forecast will appear here.</div>`;
+    el.innerHTML = `<div class="empty">Nothing to forecast yet.<br>Log some spending (History) or add recurring payments, and your 12-${word} forecast will appear here.</div>`;
     return;
   }
   const total = rows.reduce((s, r) => s + r.spend, 0);
@@ -378,42 +481,46 @@ function renderForecast() {
   if (fcSelected >= rows.length) fcSelected = 0;
 
   const basis = !f.n ? 'No day-to-day spending logged yet — forecast uses recurring payments only.'
-    : f.partial ? `Based on ${today().slice(8)} days of this month (scaled to a full month). It gets more accurate once you have a full month of data.`
-      : `Based on ${f.n} month${f.n > 1 ? 's' : ''} of history (${monthLabel(f.histMonths[0])} – ${monthLabel(f.histMonths[f.n - 1])}).`;
+    : f.partial ? `Based on ${daysBetween(f.loggedFrom, today()) + 1} days of this ${word} (scaled up to a full ${word}). It gets more accurate once you have a full ${word} of data.`
+      : `Based on ${f.n} ${word}${f.n > 1 ? 's' : ''} of history (${shortDate(f.hist[0].start)} ${parseISO(f.hist[0].start).y} – ${shortDate(f.hist[f.n - 1].end)} ${parseISO(f.hist[f.n - 1].end).y}).`;
+  const payday = state.settings.payday;
+  const cycleNote = cycleMode()
+    ? `Each bar is one pay cycle (payday ${payday === 'last' ? 'on the last day of the month' : `on the ${ordinal(+payday)}`} up to the day before the next payday), labelled by the month most of it falls in.`
+    : 'Each bar is a calendar month. Set your payday under Backup → Settings to see pay cycles instead.';
 
   let html = `
     <div class="controls">
-      <label>History to use
-        <select id="fcLookback">${[3, 6, 12].map((v) => `<option value="${v}">Last ${v} months</option>`).join('')}</select></label>
+      <label>History to use (${word}s)
+        <select id="fcLookback">${[3, 6, 12].map((v) => `<option value="${v}">Last ${v}</option>`).join('')}</select></label>
       <label>Day-to-day spending
         <select id="fcMethod"><option value="trend">Follow the trend</option><option value="average">Use the average</option></select></label>
     </div>
     <div class="tiles">
-      <div class="tile"><div class="label">Spending, next 12 months</div><div class="value">${money(total)}</div></div>
-      <div class="tile"><div class="label">Average per month</div><div class="value">${money(total / 12)}</div></div>
-      <div class="tile wide"><div class="label">Left over each month on average (income − spending)</div>
+      <div class="tile"><div class="label">Spending, next 12 ${word}s</div><div class="value">${money(total)}</div></div>
+      <div class="tile"><div class="label">Average per ${word}</div><div class="value">${money(total / 12)}</div></div>
+      <div class="tile wide"><div class="label">Left over each ${word} on average (income − spending)</div>
         <div class="value ${totalNet < 0 ? 'neg' : 'pos'}">${money(totalNet / 12, true)}</div></div>
     </div>
     <div class="card">
       <div class="legend"><span><i style="background:var(--series-1)"></i>Recurring</span><span><i style="background:var(--series-2)"></i>Day-to-day</span></div>
-      <div class="chart" role="img" aria-label="Forecast spending per month for the next 12 months">
+      <div class="chart" role="img" aria-label="Forecast spending per ${word} for the next 12 ${word}s">
         <div class="gridline" style="bottom:100%"></div><span class="gridlabel" style="bottom:100%">${shortMoney(nice)}</span>
         <div class="gridline" style="bottom:50%"></div><span class="gridlabel" style="bottom:50%">${shortMoney(nice / 2)}</span>
         <div class="gridline" style="bottom:0"></div><span class="gridlabel" style="bottom:0">0</span>
         <div class="cols">${rows.map((r, i) => `<button class="col ${i === fcSelected ? 'sel' : ''}" data-m="${i}"
-            aria-label="${monthLabel(r.key, true)}: ${money(r.spend)}">
+            aria-label="${esc(r.label)}: ${money(r.spend)}">
           ${r.dayExp ? `<div class="seg s2" style="height:${(r.dayExp / nice) * 100}%"></div>` : ''}
           ${r.recExp ? `<div class="seg s1" style="height:${(r.recExp / nice) * 100}%"></div>` : ''}
         </button>`).join('')}</div>
       </div>
-      <div class="chart-x">${rows.map((r) => `<span>${monthLabel(r.key).slice(0, 3)}</span>`).join('')}</div>
-      <p class="muted small" style="margin:10px 0 0">Tap a month to see the details.</p>
+      <div class="chart-x">${rows.map((r) => `<span>${r.short}</span>`).join('')}</div>
+      <p class="muted small" style="margin:10px 0 0">${cycleNote} Tap a bar to see the details.</p>
     </div>
     <div class="card" id="fcMonth"></div>`;
 
   if (f.catProj.length) {
     html += `<h2 class="section-title">Day-to-day spending by category</h2><div class="card">
-      <div class="kv"><span class="k small">Category</span><span class="v small muted">Avg so far → next month</span></div>` +
+      <div class="kv"><span class="k small">Category (per ${word})</span><span class="v small muted">Avg so far → next ${word}</span></div>` +
       f.catProj.map((c) => {
         const next = c.at(0);
         const ch = c.avg ? (next - c.avg) / c.avg : 0;
@@ -423,18 +530,18 @@ function renderForecast() {
       }).join('') + `</div>`;
   }
 
-  const lastKey = rows[rows.length - 1].key;
+  const lastDay = rows[rows.length - 1].end;
   const ending = state.recurring.map((r) => ({ r, last: lastPaymentDate(r) }))
-    .filter((x) => x.last && x.last >= today() && monthKey(x.last) <= lastKey)
+    .filter((x) => x.last && x.last >= today() && x.last <= lastDay)
     .sort((a, b) => a.last.localeCompare(b.last));
   if (ending.length) {
-    html += `<h2 class="section-title">Ending in the next 12 months</h2><div class="card">` +
+    html += `<h2 class="section-title">Ending in the next 12 ${word}s</h2><div class="card">` +
       ending.map(({ r, last }) => `<div class="kv"><span class="k">${esc(r.name)} · last payment ${monthLabel(monthKey(last))}</span>
         <span class="v">${r.type === 'expense' ? 'frees up' : 'loses'} ${money(monthlyEquivalent(r))}/mo</span></div>`).join('') + `</div>`;
   }
   if (f.hasCards) {
     const avgCard = rows.reduce((s, r) => s + r.cardSpend, 0) / 12;
-    html += `<p class="muted small">💳 About ${money(avgCard)} a month of your spending goes on credit cards, so it leaves your bank account the month after. Tap a month to see its card bill.</p>`;
+    html += `<p class="muted small">💳 About ${money(avgCard)} a ${word} of your spending goes on credit cards. It leaves your bank account when each card's bill is due, after its statement closes. Tap a bar to see which bills are due in it.</p>`;
   }
   html += `<p class="muted small">${basis} Card payments, transfers, and transactions linked to a recurring payment, are left out of day-to-day spending so nothing is counted twice — when you log an instalment or loan payment, link it to its recurring payment.</p>`;
 
@@ -448,21 +555,24 @@ function renderForecast() {
     el.querySelectorAll('.col').forEach((c) => c.classList.toggle('sel', +c.dataset.m === i));
     const r = rows[i];
     const line = (k, v, cls = '') => `<div class="kv ${cls}"><span class="k">${k}</span><span class="v">${v}</span></div>`;
-    $('#fcMonth').innerHTML = `<h2>${monthLabel(r.key, true)}</h2>` +
-      r.rec.filter((x) => x.r.type === 'expense').map((x) => line(`🔁 ${esc(x.r.name)}${x.count > 1 ? ` ×${x.count}` : ''}`, money(x.amount))).join('') +
+    $('#fcMonth').innerHTML = `<h2>${esc(r.label)}</h2>` +
+      r.rec.filter((x) => x.r.type === 'expense').map((x) => line(`🔁 ${esc(x.r.name)}${x.count > 1 ? ` ×${x.count}` : ''}${isCard(x.r.accountId) ? ' 💳' : ''}`, money(x.amount))).join('') +
       r.cats.filter((c) => c.amount > 0).map((c) => line(esc(c.cat), money(c.amount))).join('') +
       line('Total spending', money(r.spend), 'total') +
       line('Expected income', money(r.income)) +
       line('Left over', `<span class="${r.net < 0 ? 'neg' : 'pos'}">${money(r.net, true)}</span>`, 'total') +
       (f.hasCards ? `<h3 class="sub-head">💳 Credit cards</h3>` +
-        line(`Spent on cards this month (billed in ${monthLabel(addMonthsKey(r.key, 1)).slice(0, 3)})`, money(r.cardSpend)) +
-        line(i === 0 ? 'Card bill to pay (what you owe now)' : `Card bill to pay (${monthLabel(rows[i - 1].key).slice(0, 3)} spending)`, money(r.cardBill)) +
+        line(`Spent on cards in this ${word}`, money(r.cardSpend)) +
+        (r.bills.length ? r.bills.map((b) => line(`${esc(b.card.name)} bill due ${shortDate(b.due)} <span class="muted small">(${shortDate(b.from)} – ${shortDate(b.to)}${b.estimated ? ', estimated' : ''})</span>`, money(b.amount))).join('')
+          : line('Card bills due', money(0))) +
         line('Cash out of your bank accounts', money(r.cashOut), 'total') +
-        `<p class="muted small" style="margin:6px 0 0">Spending paid directly from the bank, plus the card bill.</p>` : '');
+        `<p class="muted small" style="margin:6px 0 0">Spending paid directly from the bank, plus the card bills due in this ${word}.</p>` : '');
   };
   el.querySelectorAll('.col').forEach((c) => c.addEventListener('click', () => showMonth(+c.dataset.m)));
   showMonth(fcSelected);
 }
+
+const ordinal = (n) => n + (n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th');
 
 // Compact axis label, e.g. 1500000 cents -> "15k".
 function shortMoney(cents) {

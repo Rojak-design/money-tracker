@@ -43,7 +43,7 @@ const emptyState = () => ({
   categories: null,    // {expense: [names], income: [names]} — set up on first load
   recurring: [],       // see plan.js
   projects: [],        // see plan.js
-  settings: { currency: 'S$', fcLookback: 6, fcMethod: 'trend' }
+  settings: { currency: 'S$', fcLookback: 6, fcMethod: 'trend', payday: 0, payWeekend: false }
 });
 let state = emptyState();
 
@@ -106,22 +106,13 @@ const accountOptions = (list = state.accounts) =>
   list.map((a) => `<option value="${a.id}">${a.type === 'credit' ? '💳 ' : ''}${esc(a.name)}</option>`).join('');
 // What you owe on a card (positive number). A card's balance is negative when you owe money.
 const owed = (id, upTo) => -balance(id, upTo);
-// The next date (today or later) that a card bill is due, or null.
+// The next date (today or later) that a card bill is due, or null if no due day is set.
+// (Statement-cycle helpers live in plan.js.)
 function nextDueDate(a) {
   if (!a.dueDay) return null;
-  const t = today();
-  const [y, m] = t.split('-').map(Number);
-  for (const [yy, mm] of [[y, m], [m === 12 ? y + 1 : y, m === 12 ? 1 : m + 1]]) {
-    const last = new Date(yy, mm, 0).getDate();
-    const d = `${yy}-${String(mm).padStart(2, '0')}-${String(Math.min(a.dueDay, last)).padStart(2, '0')}`;
-    if (d >= t) return d;
-  }
-  return null;
-}
-// Spending on a card in a given month (YYYY-MM), not counting card payments.
-function cardSpendInMonth(id, ym) {
-  return state.transactions.filter((t) => t.accountId === id && t.date.startsWith(ym) && !t.transferId)
-    .reduce((s, t) => s + (t.type === 'expense' ? t.amount : -t.amount), 0);
+  const cur = cardStatementWindow(a, today());
+  const last = cardStatementWindow(a, addDaysISO(cur.from, -1));
+  return last.due >= today() ? last.due : cur.due;
 }
 
 function balance(accountId, upToDate) {
@@ -185,6 +176,7 @@ function render() {
   renderRecon();
   if (typeof renderPlan === 'function') renderPlan();
   $('#currencyInput').value = state.settings.currency || '';
+  renderPaySettings();
 }
 
 function renderAccounts() {
@@ -252,9 +244,9 @@ function renderTx() {
   }
   if (txCatFilter !== 'all') {
     const net = txs.reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0);
-    const ym = today().slice(0, 7);
-    const month = txs.filter((t) => t.date.startsWith(ym)).reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0);
-    totalEl.innerHTML = `<span class="muted small">${esc(txCatFilter)} this month</span><strong>${money(month, true)}</strong>
+    const p = periodContaining(today());
+    const month = txs.filter((t) => t.date >= p.start && t.date <= p.end).reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0);
+    totalEl.innerHTML = `<span class="muted small">${esc(txCatFilter)} this ${periodWord()} (${shortDate(p.start)} – ${shortDate(p.end)})</span><strong>${money(month, true)}</strong>
       <span class="muted small">All time: ${money(net, true)}</span>`;
     totalEl.classList.remove('hidden');
   } else totalEl.classList.add('hidden');
@@ -282,9 +274,8 @@ function accountSheet(id) {
   const a = state.accounts.find((x) => x.id === id);
   let type = a ? a.type || 'bank' : 'bank';
   const others = bankAccounts().filter((x) => !a || x.id !== a.id);
-  const thisMonth = today().slice(0, 7);
-  const [cy, cm] = thisMonth.split('-').map(Number);
-  const lastMonth = cm === 1 ? `${cy - 1}-12` : `${cy}-${String(cm - 1).padStart(2, '0')}`;
+  const curSt = a && type === 'credit' ? cardStatementWindow(a, today()) : null;
+  const lastSt = curSt ? cardStatementWindow(a, addDaysISO(curSt.from, -1)) : null;
   openSheet(a ? (type === 'credit' ? 'Credit card' : 'Edit account') : 'New account', `
     <form class="form" id="accForm">
       ${a ? '' : `<div class="segmented" id="accType">
@@ -292,8 +283,8 @@ function accountSheet(id) {
         <button type="button" data-t="credit">💳 Credit card</button></div>`}
       ${a && type === 'credit' ? `<div class="card-inset">
         <div class="kv total"><span class="k">Owed now</span><span class="v">${money(Math.max(0, owed(a.id)))}</span></div>
-        <div class="kv"><span class="k">Spent this month</span><span class="v">${money(cardSpendInMonth(a.id, thisMonth))}</span></div>
-        <div class="kv"><span class="k">Spent last month</span><span class="v">${money(cardSpendInMonth(a.id, lastMonth))}</span></div>
+        <div class="kv"><span class="k">This statement (${shortDate(curSt.from)} – ${shortDate(curSt.to)})</span><span class="v">${money(cardSpendBetween(a.id, curSt.from, curSt.to))}</span></div>
+        <div class="kv"><span class="k">Last statement (${shortDate(lastSt.from)} – ${shortDate(lastSt.to)}), due ${a.dueDay ? shortDate(lastSt.due) : '—'}</span><span class="v">${money(cardSpendBetween(a.id, lastSt.from, lastSt.to))}</span></div>
         ${nextDueDate(a) ? `<div class="kv"><span class="k">Next bill due</span><span class="v">${niceDate(nextDueDate(a))}</span></div>` : ''}
         ${a.limit ? `<div class="kv"><span class="k">Available credit</span><span class="v">${money(a.limit - Math.max(0, owed(a.id)))}</span></div>` : ''}
       </div>
@@ -308,6 +299,9 @@ function accountSheet(id) {
       <div id="accCardFields" class="form">
         <label>Pay the bill from
           <select id="accPayFrom"><option value="">—</option>${accountOptions(others)}</select>
+        </label>
+        <label>Statement closes on day of the month (optional)
+          <input id="accStmtDay" type="number" inputmode="numeric" min="1" max="31" step="1" placeholder="e.g. 15 — blank = end of month" value="${a && a.statementDay ? a.statementDay : ''}">
         </label>
         <label>Bill due on day of the month (optional)
           <input id="accDueDay" type="number" inputmode="numeric" min="1" max="31" step="1" placeholder="e.g. 25" value="${a && a.dueDay ? a.dueDay : ''}">
@@ -344,7 +338,9 @@ function accountSheet(id) {
       start = -start; // owing money = negative balance
       const limit = toCents($('#accLimit').value || '0');
       const due = parseInt($('#accDueDay').value, 10);
-      Object.assign(data, { payFromId: $('#accPayFrom').value, limit: isNaN(limit) ? 0 : limit, dueDay: due >= 1 && due <= 31 ? due : 0 });
+      const stmt = parseInt($('#accStmtDay').value, 10);
+      Object.assign(data, { payFromId: $('#accPayFrom').value, limit: isNaN(limit) ? 0 : limit,
+        dueDay: due >= 1 && due <= 31 ? due : 0, statementDay: stmt >= 1 && stmt <= 31 ? stmt : 0 });
     }
     data.start = start;
     if (a) Object.assign(a, data);
@@ -797,6 +793,28 @@ $('#importFile').addEventListener('change', async (e) => {
     console.error(err);
     toast('That file is not a valid Money Tracker backup');
   }
+});
+
+function renderPaySettings() {
+  const sel = $('#paydayInput');
+  if (!sel.options.length) {
+    sel.innerHTML = `<option value="0">Not set — use calendar months</option>` +
+      Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${ordinal(i + 1)} of the month</option>`).join('') +
+      `<option value="last">Last day of the month</option>`;
+  }
+  sel.value = String(state.settings.payday || 0);
+  $('#payWeekendInput').checked = !!state.settings.payWeekend;
+  $('#payWeekendWrap').classList.toggle('hidden', !state.settings.payday);
+}
+$('#paydayInput').addEventListener('change', async (e) => {
+  const v = e.target.value;
+  state.settings.payday = v === 'last' ? 'last' : +v;
+  await save(); render();
+  toast(state.settings.payday ? 'Payday saved — charts now use pay cycles' : 'Using calendar months');
+});
+$('#payWeekendInput').addEventListener('change', async (e) => {
+  state.settings.payWeekend = e.target.checked;
+  await save(); render();
 });
 
 $('#currencyInput').addEventListener('change', async (e) => {

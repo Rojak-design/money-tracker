@@ -100,6 +100,12 @@
         <label>Currency symbol
           <input type="text" id="currencyInput" maxlength="4" placeholder="e.g. $ or £ or RM">
         </label>
+        <label>Payday (salary day)
+          <select id="paydayInput"></select>
+        </label>
+        <label id="payWeekendWrap" class="check"><input type="checkbox" id="payWeekendInput">
+          If payday falls on a weekend, I'm paid on the Friday before</label>
+        <p class="muted small" style="margin:-6px 0 0">With a payday set, the forecast and totals use pay cycles (payday to the day before the next payday) instead of calendar months.</p>
         <button class="btn secondary full" id="manageCatsBtn">Manage categories</button>
         <p id="storageInfo" class="muted small"></p>
       </div>
