@@ -729,8 +729,18 @@ function txSheet(id, prefill) {
       const d = $('#txDate').value;
       const during = trips.find((x) => d >= x.start && d <= x.end);
       tripSel.value = during ? during.id : '';
-      $('#txTripHint').textContent = during ? `Linked to your ${tripTitle(during)} trip because of the date — change it if this isn't travel.` : '';
-      $('#txTripHint').classList.toggle('hidden', !during);
+      // Money back usually comes after the trip: suggest a trip that ended in the 60 days before.
+      const recent = !during && type === 'refund'
+        && trips.find((x) => x.end < d && daysBetween(x.end, d) <= 60);
+      const hint = $('#txTripHint');
+      if (during) hint.textContent = `Linked to your ${tripTitle(during)} trip because of the date — change it if this isn't travel.`;
+      else if (recent) hint.innerHTML = `Money back for your ${esc(tripTitle(recent))} trip (ended ${shortDate(recent.end)})? <button type="button" class="link-btn small" id="txTripSuggest">Link it</button>`;
+      hint.classList.toggle('hidden', !during && !recent);
+      const sug = $('#txTripSuggest');
+      if (sug) sug.addEventListener('click', () => {
+        tripSel.value = recent.id; tripTouched = true;
+        hint.textContent = `Linked to your ${tripTitle(recent)} trip — it'll be taken off the trip's spending.`;
+      });
     }
   }
   tripSel.addEventListener('change', () => { tripTouched = true; $('#txTripHint').classList.add('hidden'); });
