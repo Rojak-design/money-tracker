@@ -1,7 +1,7 @@
 // Service worker: lets the app open with no internet connection.
 // When you change any app file, bump this version number AND the ?v= numbers in index.html
 // so phones get the update with all files matching.
-const VERSION = 23;
+const VERSION = 24;
 const CACHE = 'money-tracker-v' + VERSION;
 const FILES = [
   './',
@@ -10,10 +10,10 @@ const FILES = [
   './app.js?v=' + VERSION,
   './plan.js?v=' + VERSION,
   './manifest.json',
-  './icon.svg',
-  './icon-192.png',
-  './icon-512.png',
-  './apple-touch-icon.png'
+  './icon-v2.svg',
+  './icon-v2-192.png',
+  './icon-v2-512.png',
+  './apple-touch-icon-v2.png'
 ];
 
 self.addEventListener('install', (e) => {

@@ -43,6 +43,6 @@ On iPhone, the home-screen app and Safari keep separate data — use the home-sc
 - `app.js` – accounts, transactions, categories, reconciliation, backup
 - `plan.js` – recurring payments, savings projects and the forecast
 - `ocr/` – Tesseract.js (Apache 2.0, licences included) for reading balances from screenshots; loaded only when you pick a screenshot
-- `manifest.json`, `sw.js`, `icon*.png`, `icon.svg` – make it installable and work offline
+- `manifest.json`, `sw.js`, `icon-v2*.png`, `icon-v2.svg`, `apple-touch-icon-v2.png` – make it installable and work offline
 
 When you change any file, bump `VERSION` in `sw.js` and the matching `?v=` numbers in `index.html` (keep them all the same) so phones pick up the update with all files matching.
