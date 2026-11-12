@@ -123,13 +123,15 @@ function nextDueDate(a) {
   return last.due >= today() ? last.due : cur.due;
 }
 
+// Balance as of a date (default: today). Entries dated in the future are planned and don't count yet.
 function balance(accountId, upToDate) {
   const acc = state.accounts.find((a) => a.id === accountId);
   if (!acc) return 0;
+  const until = upToDate || today();
   let total = acc.start;
   for (const t of state.transactions) {
     if (t.accountId !== accountId) continue;
-    if (upToDate && t.date > upToDate) continue;
+    if (t.date > until) continue;
     total += t.type === 'income' ? t.amount : -t.amount;
   }
   return total;
@@ -275,7 +277,7 @@ function renderTx() {
   for (const t of txs) {
     if (t.date !== lastDate) { html += `<div class="date-head">${niceDate(t.date)}</div>`; lastDate = t.date; }
     const signed = t.type === 'income' ? t.amount : -t.amount;
-    const refundTag = t.refund ? '<span class="tag">money back</span>' : '';
+    const refundTag = (t.refund ? '<span class="tag">money back</span>' : '') + (t.date > today() ? '<span class="tag planned">planned</span>' : '');
     let title = t.category || (t.type === 'income' ? 'Income' : 'Expense');
     let sub = [txFilter === 'all' ? accountName(t.accountId) : '', t.note].filter(Boolean).map(esc).join(' · ');
     if (t.transferId) {
