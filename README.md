@@ -40,4 +40,4 @@ On iPhone, the home-screen app and Safari keep separate data — use the home-sc
 - `plan.js` – recurring payments, savings projects and the forecast
 - `manifest.json`, `sw.js`, `icon*.png`, `icon.svg` – make it installable and work offline
 
-When you change any file, bump the version in `sw.js` (e.g. `money-tracker-v2` → `v3`) so phones pick up the update.
+When you change any file, bump `VERSION` in `sw.js` and the matching `?v=` numbers in `index.html` (keep them all the same) so phones pick up the update with all files matching.
