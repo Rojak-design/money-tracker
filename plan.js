@@ -190,8 +190,8 @@ function recurringSheet(id) {
         <input id="rcEnd" type="date" value="${r && r.end ? r.end : ''}">
       </label>
       ${catPickerHtml('rc')}
-      <label>Paid from / into account (optional)
-        <select id="rcAccount"><option value="">—</option>${state.accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
+      <label>Paid from / into account or card (optional)
+        <select id="rcAccount"><option value="">—</option>${accountOptions()}</select>
       </label>
       <label>Note (optional)
         <input id="rcNote" maxlength="100" value="${esc(r ? r.note : '')}">
@@ -275,7 +275,7 @@ function recurringSheet(id) {
 
 /* ---------- Forecast ---------- */
 // Day-to-day (non-recurring) history: everything except transfers and transactions linked to a recurring payment.
-const isDayToDay = (t) => !t.recurringId && t.category !== 'Transfer';
+const isDayToDay = (t) => !t.recurringId && !t.transferId && t.category !== 'Transfer';
 
 function forecast() {
   const lookback = state.settings.fcLookback || 6;
@@ -301,13 +301,18 @@ function forecast() {
   const n = histMonths.length;
   const idx = Object.fromEntries(histMonths.map((k, i) => [k, i]));
   const expSeries = {}; // category -> [cents per month]
+  const cardTotals = {}; // category -> cents spent on credit cards in the window
   const incSeries = new Array(n).fill(0);
   for (const x of txs) {
     const i = idx[monthKey(x.date)];
     if (i === undefined) continue;
     if (x.type === 'income') incSeries[i] += x.amount;
-    else (expSeries[x.category] ||= new Array(n).fill(0))[i] += x.amount;
+    else {
+      (expSeries[x.category] ||= new Array(n).fill(0))[i] += x.amount;
+      if (isCard(x.accountId)) cardTotals[x.category] = (cardTotals[x.category] || 0) + x.amount;
+    }
   }
+  const hasCards = cardAccounts().length > 0;
 
   // Projection for one category: average, optionally tilted by a least-squares trend line.
   function project(series) {
@@ -322,7 +327,9 @@ function forecast() {
     const at = (j) => Math.min(2 * avg, Math.max(0, avg + slope * (n + 1 + j - xm)));
     return { avg, at, slope };
   }
-  const catProj = Object.entries(expSeries).map(([cat, series]) => ({ cat, ...project(series) }))
+  const catProj = Object.entries(expSeries).map(([cat, series]) => ({
+    cat, ...project(series),
+    cardShare: (cardTotals[cat] || 0) / Math.max(1, series.reduce((a, b) => a + b, 0)) }))
     .filter((c) => c.avg > 0).sort((a, b) => b.avg - a.avg);
   const incAvg = n ? incSeries.reduce((a, b) => a + b, 0) * scale / n : 0;
 
@@ -339,9 +346,19 @@ function forecast() {
     const cats = catProj.map((c) => ({ cat: c.cat, amount: Math.round(c.at(j)) }));
     const dayExp = cats.reduce((s, c) => s + c.amount, 0);
     const income = recInc + Math.round(incAvg);
-    return { key, rec, recExp, recInc, cats, dayExp, income, spend: recExp + dayExp, net: income - recExp - dayExp };
+    // Spending put on credit cards this month — paid from the bank next month.
+    const cardSpend = rec.filter((x) => x.r.type === 'expense' && isCard(x.r.accountId)).reduce((s, x) => s + x.amount, 0) +
+      Math.round(catProj.reduce((s, c, ci) => s + cats[ci].amount * c.cardShare, 0));
+    return { key, rec, recExp, recInc, cats, dayExp, income, spend: recExp + dayExp, net: income - recExp - dayExp, cardSpend };
   });
-  return { rows, catProj, histMonths, partial, incAvg, n, method, lookback };
+  // Cash leaving the bank accounts: non-card spending this month + last month's card bill.
+  // The first bill is what's owed on the cards today.
+  const owedNow = cardAccounts().reduce((s, a) => s + Math.max(0, owed(a.id)), 0);
+  rows.forEach((r, j) => {
+    r.cardBill = j === 0 ? owedNow : rows[j - 1].cardSpend;
+    r.cashOut = r.spend - r.cardSpend + r.cardBill;
+  });
+  return { rows, catProj, histMonths, partial, incAvg, n, method, lookback, hasCards, owedNow };
 }
 
 let fcSelected = 0;
@@ -415,7 +432,11 @@ function renderForecast() {
       ending.map(({ r, last }) => `<div class="kv"><span class="k">${esc(r.name)} · last payment ${monthLabel(monthKey(last))}</span>
         <span class="v">${r.type === 'expense' ? 'frees up' : 'loses'} ${money(monthlyEquivalent(r))}/mo</span></div>`).join('') + `</div>`;
   }
-  html += `<p class="muted small">${basis} Transfers, and transactions linked to a recurring payment, are left out of day-to-day spending so nothing is counted twice — when you log an instalment or loan payment, link it to its recurring payment.</p>`;
+  if (f.hasCards) {
+    const avgCard = rows.reduce((s, r) => s + r.cardSpend, 0) / 12;
+    html += `<p class="muted small">💳 About ${money(avgCard)} a month of your spending goes on credit cards, so it leaves your bank account the month after. Tap a month to see its card bill.</p>`;
+  }
+  html += `<p class="muted small">${basis} Card payments, transfers, and transactions linked to a recurring payment, are left out of day-to-day spending so nothing is counted twice — when you log an instalment or loan payment, link it to its recurring payment.</p>`;
 
   el.innerHTML = html;
   $('#fcLookback').value = String(f.lookback);
@@ -432,7 +453,12 @@ function renderForecast() {
       r.cats.filter((c) => c.amount > 0).map((c) => line(esc(c.cat), money(c.amount))).join('') +
       line('Total spending', money(r.spend), 'total') +
       line('Expected income', money(r.income)) +
-      line('Left over', `<span class="${r.net < 0 ? 'neg' : 'pos'}">${money(r.net, true)}</span>`, 'total');
+      line('Left over', `<span class="${r.net < 0 ? 'neg' : 'pos'}">${money(r.net, true)}</span>`, 'total') +
+      (f.hasCards ? `<h3 class="sub-head">💳 Credit cards</h3>` +
+        line(`Spent on cards this month (billed in ${monthLabel(addMonthsKey(r.key, 1)).slice(0, 3)})`, money(r.cardSpend)) +
+        line(i === 0 ? 'Card bill to pay (what you owe now)' : `Card bill to pay (${monthLabel(rows[i - 1].key).slice(0, 3)} spending)`, money(r.cardBill)) +
+        line('Cash out of your bank accounts', money(r.cashOut), 'total') +
+        `<p class="muted small" style="margin:6px 0 0">Spending paid directly from the bank, plus the card bill.</p>` : '');
   };
   el.querySelectorAll('.col').forEach((c) => c.addEventListener('click', () => showMonth(+c.dataset.m)));
   showMonth(fcSelected);
@@ -590,14 +616,14 @@ function projectSheet(id) {
       <label>How do you track what's saved?
         <select id="pjMode">
           <option value="manual">I'll type the amount saved</option>
-          ${state.accounts.length ? '<option value="account">Use the balance of an account</option>' : ''}
+          ${bankAccounts().length ? '<option value="account">Use the balance of an account</option>' : ''}
         </select>
       </label>
       <label id="pjSavedWrap">Saved so far
         <input id="pjSaved" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" value="${p && p.saved ? (p.saved / 100).toFixed(2) : ''}">
       </label>
       <label id="pjAccWrap">Account
-        <select id="pjAcc">${state.accounts.map((a) => `<option value="${a.id}">${esc(a.name)} (${money(balance(a.id))})</option>`).join('')}</select>
+        <select id="pjAcc">${bankAccounts().map((a) => `<option value="${a.id}">${esc(a.name)} (${money(balance(a.id))})</option>`).join('')}</select>
       </label>
       <label>How much you'll save each month
         <input id="pjMonthly" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" value="${p && p.monthly ? (p.monthly / 100).toFixed(2) : ''}">
@@ -607,7 +633,7 @@ function projectSheet(id) {
       </label>
       <button class="btn full" type="submit">Save</button>
     </form>`);
-  $('#pjMode').value = p && p.savedMode === 'account' && state.accounts.length ? 'account' : 'manual';
+  $('#pjMode').value = p && p.savedMode === 'account' && bankAccounts().length ? 'account' : 'manual';
   if (p && p.accountId && state.accounts.some((a) => a.id === p.accountId)) $('#pjAcc').value = p.accountId;
   const modeUI = () => {
     const acc = $('#pjMode').value === 'account';

@@ -97,6 +97,32 @@ function niceDate(iso) {
   return dt.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 }
 const accountName = (id) => (state.accounts.find((a) => a.id === id) || {}).name || '(deleted account)';
+const accountById = (id) => state.accounts.find((a) => a.id === id);
+const isCard = (id) => (accountById(id) || {}).type === 'credit';
+const bankAccounts = () => state.accounts.filter((a) => a.type !== 'credit');
+const cardAccounts = () => state.accounts.filter((a) => a.type === 'credit');
+// <option>s for an account picker; cards are marked with 💳.
+const accountOptions = (list = state.accounts) =>
+  list.map((a) => `<option value="${a.id}">${a.type === 'credit' ? '💳 ' : ''}${esc(a.name)}</option>`).join('');
+// What you owe on a card (positive number). A card's balance is negative when you owe money.
+const owed = (id, upTo) => -balance(id, upTo);
+// The next date (today or later) that a card bill is due, or null.
+function nextDueDate(a) {
+  if (!a.dueDay) return null;
+  const t = today();
+  const [y, m] = t.split('-').map(Number);
+  for (const [yy, mm] of [[y, m], [m === 12 ? y + 1 : y, m === 12 ? 1 : m + 1]]) {
+    const last = new Date(yy, mm, 0).getDate();
+    const d = `${yy}-${String(mm).padStart(2, '0')}-${String(Math.min(a.dueDay, last)).padStart(2, '0')}`;
+    if (d >= t) return d;
+  }
+  return null;
+}
+// Spending on a card in a given month (YYYY-MM), not counting card payments.
+function cardSpendInMonth(id, ym) {
+  return state.transactions.filter((t) => t.accountId === id && t.date.startsWith(ym) && !t.transferId)
+    .reduce((s, t) => s + (t.type === 'expense' ? t.amount : -t.amount), 0);
+}
 
 function balance(accountId, upToDate) {
   const acc = state.accounts.find((a) => a.id === accountId);
@@ -165,19 +191,34 @@ function renderAccounts() {
   const list = $('#accountList');
   let total = 0;
   if (!state.accounts.length) {
-    list.innerHTML = `<div class="empty">No accounts yet.<br>Tap “New account” to create one (e.g. Savings, Spending).</div>`;
+    list.innerHTML = `<div class="empty">No accounts yet.<br>Tap “New account” to add a bank account (e.g. Savings) or a credit card.</div>`;
   } else {
-    list.innerHTML = state.accounts.map((a) => {
+    const row = (a) => {
       const b = balance(a.id);
       total += b;
       const last = state.reconciliations.filter((r) => r.accountId === a.id).sort((x, y) => (y.date + y.id).localeCompare(x.date + x.id))[0];
-      const sub = last ? `Last checked ${niceDate(last.date)}` : 'Not reconciled yet';
+      const checked = last ? `Checked ${niceDate(last.date)}` : 'Not reconciled yet';
+      if (a.type === 'credit') {
+        const due = nextDueDate(a);
+        const sub = [due ? `Due ${niceDate(due)}` : '', a.payFromId ? `paid from ${esc(accountName(a.payFromId))}` : '', checked].filter(Boolean).join(' · ');
+        return `<button class="item" data-acc="${a.id}">
+          <div class="left"><div class="title">💳 ${esc(a.name)}</div><div class="sub">${sub}</div></div>
+          <div class="amt-col"><div class="amt ${-b > 0 ? 'neg' : ''}">${money(Math.max(0, -b))}</div><div class="sub">${b > 0 ? 'in credit' : 'owed'}</div></div></button>`;
+      }
       return `<button class="item" data-acc="${a.id}">
-        <div class="left"><div class="title">${esc(a.name)}</div><div class="sub">${sub}</div></div>
+        <div class="left"><div class="title">${esc(a.name)}</div><div class="sub">${checked}</div></div>
         <div class="amt ${b < 0 ? 'neg' : ''}">${money(b)}</div></button>`;
-    }).join('');
+    };
+    const banks = bankAccounts(), cards = cardAccounts();
+    list.innerHTML = banks.map(row).join('') +
+      (cards.length ? `<h2 class="section-title" style="margin:12px 0 2px">Credit cards</h2>` + cards.map(row).join('') : '');
   }
+  const cardOwed = cardAccounts().reduce((s, a) => s + Math.max(0, owed(a.id)), 0);
+  const bankTotal = bankAccounts().reduce((s, a) => s + balance(a.id), 0);
+  $('#totalLabel').textContent = cardAccounts().length ? 'Net total (bank accounts − card bills)' : 'Total of all accounts';
   $('#totalBalance').textContent = money(total);
+  $('#totalSplit').innerHTML = cardAccounts().length
+    ? `In the bank ${money(bankTotal)} · Owed on cards ${money(cardOwed)}` : '';
   list.querySelectorAll('[data-acc]').forEach((el) => el.addEventListener('click', () => accountSheet(el.dataset.acc)));
 }
 
@@ -186,7 +227,7 @@ let txCatFilter = 'all';
 function renderTx() {
   const sel = $('#txFilter');
   sel.innerHTML = `<option value="all">All accounts</option>` +
-    state.accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('');
+    accountOptions();
   if (txFilter !== 'all' && !state.accounts.some((a) => a.id === txFilter)) txFilter = 'all';
   sel.value = txFilter;
 
@@ -239,46 +280,147 @@ $('#addAccountBtn').addEventListener('click', () => accountSheet());
 
 function accountSheet(id) {
   const a = state.accounts.find((x) => x.id === id);
-  openSheet(a ? 'Edit account' : 'New account', `
+  let type = a ? a.type || 'bank' : 'bank';
+  const others = bankAccounts().filter((x) => !a || x.id !== a.id);
+  const thisMonth = today().slice(0, 7);
+  const [cy, cm] = thisMonth.split('-').map(Number);
+  const lastMonth = cm === 1 ? `${cy - 1}-12` : `${cy}-${String(cm - 1).padStart(2, '0')}`;
+  openSheet(a ? (type === 'credit' ? 'Credit card' : 'Edit account') : 'New account', `
     <form class="form" id="accForm">
-      <label>Account name
+      ${a ? '' : `<div class="segmented" id="accType">
+        <button type="button" data-t="bank">Bank account</button>
+        <button type="button" data-t="credit">💳 Credit card</button></div>`}
+      ${a && type === 'credit' ? `<div class="card-inset">
+        <div class="kv total"><span class="k">Owed now</span><span class="v">${money(Math.max(0, owed(a.id)))}</span></div>
+        <div class="kv"><span class="k">Spent this month</span><span class="v">${money(cardSpendInMonth(a.id, thisMonth))}</span></div>
+        <div class="kv"><span class="k">Spent last month</span><span class="v">${money(cardSpendInMonth(a.id, lastMonth))}</span></div>
+        ${nextDueDate(a) ? `<div class="kv"><span class="k">Next bill due</span><span class="v">${niceDate(nextDueDate(a))}</span></div>` : ''}
+        ${a.limit ? `<div class="kv"><span class="k">Available credit</span><span class="v">${money(a.limit - Math.max(0, owed(a.id)))}</span></div>` : ''}
+      </div>
+      <button type="button" class="btn full" id="accPay">Pay card bill</button>` : ''}
+      <label>Name
         <input id="accName" required maxlength="40" placeholder="e.g. Savings" value="${esc(a ? a.name : '')}">
       </label>
-      <label>Starting balance
-        <input id="accStart" type="number" inputmode="decimal" step="0.01" required placeholder="0.00" value="${a ? (a.start / 100).toFixed(2) : ''}">
+      <label><span id="accStartLabel">Starting balance</span>
+        <input id="accStart" type="number" inputmode="decimal" step="0.01" required placeholder="0.00"
+          value="${a ? ((type === 'credit' ? -a.start : a.start) / 100).toFixed(2) : ''}">
       </label>
-      ${a ? `<p class="muted small">Current balance: <strong>${money(balance(a.id))}</strong></p>` : ''}
+      <div id="accCardFields" class="form">
+        <label>Pay the bill from
+          <select id="accPayFrom"><option value="">—</option>${accountOptions(others)}</select>
+        </label>
+        <label>Bill due on day of the month (optional)
+          <input id="accDueDay" type="number" inputmode="numeric" min="1" max="31" step="1" placeholder="e.g. 25" value="${a && a.dueDay ? a.dueDay : ''}">
+        </label>
+        <label>Credit limit (optional)
+          <input id="accLimit" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" value="${a && a.limit ? (a.limit / 100).toFixed(2) : ''}">
+        </label>
+      </div>
+      ${a && type !== 'credit' ? `<p class="muted small">Current balance: <strong>${money(balance(a.id))}</strong></p>` : ''}
       <button class="btn full" type="submit">Save</button>
       ${a ? `<div class="btn-row">
         <button type="button" class="btn secondary" id="accView">See transactions</button>
         <button type="button" class="btn danger" id="accDel">Delete</button></div>` : ''}
     </form>`);
+  if (a && a.payFromId) $('#accPayFrom').value = a.payFromId;
+  else if (others.length) $('#accPayFrom').value = others[0].id;
+  function setType(t) {
+    type = t;
+    document.querySelectorAll('#accType button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
+    $('#accCardFields').classList.toggle('hidden', t !== 'credit');
+    $('#accStartLabel').textContent = t === 'credit' ? 'Amount owed on the card now' : 'Starting balance';
+    $('#accName').placeholder = t === 'credit' ? 'e.g. Citi Rewards' : 'e.g. Savings';
+  }
+  document.querySelectorAll('#accType button').forEach((b) => b.addEventListener('click', () => setType(b.dataset.t)));
+  setType(type);
+
   $('#accForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const name = $('#accName').value.trim();
-    const start = toCents($('#accStart').value);
-    if (!name || isNaN(start)) return toast('Please fill in the name and starting balance');
-    if (a) { a.name = name; a.start = start; }
-    else state.accounts.push({ id: uid(), name, start, createdAt: Date.now() });
+    let start = toCents($('#accStart').value);
+    if (!name || isNaN(start)) return toast(type === 'credit' ? 'Please fill in the name and amount owed' : 'Please fill in the name and starting balance');
+    const data = { name, type };
+    if (type === 'credit') {
+      start = -start; // owing money = negative balance
+      const limit = toCents($('#accLimit').value || '0');
+      const due = parseInt($('#accDueDay').value, 10);
+      Object.assign(data, { payFromId: $('#accPayFrom').value, limit: isNaN(limit) ? 0 : limit, dueDay: due >= 1 && due <= 31 ? due : 0 });
+    }
+    data.start = start;
+    if (a) Object.assign(a, data);
+    else state.accounts.push({ id: uid(), createdAt: Date.now(), ...data });
     await save();
     closeSheet(); render();
-    toast('Account saved');
+    toast(type === 'credit' ? 'Card saved' : 'Account saved');
   });
   if (a) {
+    if ($('#accPay')) $('#accPay').addEventListener('click', () => payCardSheet(a.id));
     $('#accView').addEventListener('click', () => { txFilter = a.id; closeSheet(); show('tx'); });
     $('#accDel').addEventListener('click', async () => {
       const n = state.transactions.filter((t) => t.accountId === a.id).length;
       if (!confirm(`Delete “${a.name}” and its ${n} transaction(s) and reconciliations? This cannot be undone.`)) return;
       const recs = state.reconciliations.filter((r) => r.accountId === a.id);
+      // Card payments have a matching transaction in the other account — remove those too.
+      const pairIds = new Set(state.transactions.filter((t) => t.accountId === a.id && t.transferId).map((t) => t.transferId));
       state.accounts = state.accounts.filter((x) => x.id !== a.id);
-      state.transactions = state.transactions.filter((t) => t.accountId !== a.id);
+      state.transactions = state.transactions.filter((t) => t.accountId !== a.id && !(t.transferId && pairIds.has(t.transferId)));
       state.reconciliations = state.reconciliations.filter((r) => r.accountId !== a.id);
+      for (const x of state.accounts) if (x.payFromId === a.id) x.payFromId = '';
       await save();
       for (const r of recs) await dbDel('img:' + r.id);
       closeSheet(); render();
       toast('Account deleted');
     });
   }
+}
+
+/* ---------- Credit card bill payments ---------- */
+// A payment is two linked transactions: money out of the bank account, money into the card.
+function payCardSheet(cardId, pairId) {
+  const card = accountById(cardId);
+  const banks = bankAccounts();
+  if (!banks.length) return toast('Add a bank account to pay the card from');
+  const existing = pairId ? state.transactions.filter((t) => t.transferId === pairId) : [];
+  const out = existing.find((t) => t.type === 'expense');
+  const amt = out ? out.amount : Math.max(0, owed(cardId));
+  openSheet(out ? 'Card payment' : `Pay ${card.name}`, `
+    <form class="form" id="payForm">
+      ${out ? '' : `<p class="muted small" style="margin:0">You owe ${money(Math.max(0, owed(cardId)))} on this card.</p>`}
+      <label>Amount paid
+        <input id="payAmt" type="number" inputmode="decimal" step="0.01" min="0.01" required value="${amt ? (amt / 100).toFixed(2) : ''}">
+      </label>
+      <label>Paid from
+        <select id="payFrom">${accountOptions(banks)}</select>
+      </label>
+      <label>Date
+        <input id="payDate" type="date" required value="${out ? out.date : today()}">
+      </label>
+      <p class="muted small" style="margin:0">This moves money from the bank account to the card. It isn't counted as spending — the purchases on the card already were.</p>
+      <button class="btn full" type="submit">${out ? 'Save' : 'Record payment'}</button>
+      ${out ? '<button type="button" class="btn danger full" id="payDel">Delete payment</button>' : ''}
+    </form>`);
+  const from = out ? out.accountId : card.payFromId;
+  if (banks.some((b) => b.id === from)) $('#payFrom').value = from;
+  $('#payForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const amount = toCents($('#payAmt').value);
+    if (!(amount > 0)) return toast('Enter an amount above 0');
+    const fromId = $('#payFrom').value;
+    const date = $('#payDate').value || today();
+    const tid = pairId || uid();
+    state.transactions = state.transactions.filter((t) => t.transferId !== tid);
+    state.transactions.push(
+      { id: uid(), transferId: tid, accountId: fromId, type: 'expense', amount, category: 'Transfer', date, note: `Card payment → ${card.name}` },
+      { id: uid(), transferId: tid, accountId: cardId, type: 'income', amount, category: 'Transfer', date, note: `Card payment from ${accountName(fromId)}` });
+    await save();
+    closeSheet(); render();
+    toast('Card payment recorded');
+  });
+  if (out) $('#payDel').addEventListener('click', async () => {
+    if (!confirm('Delete this card payment (from both accounts)?')) return;
+    state.transactions = state.transactions.filter((t) => t.transferId !== pairId);
+    await save(); closeSheet(); render(); toast('Payment deleted');
+  });
 }
 
 /* ---------- Transactions ---------- */
@@ -331,6 +473,10 @@ $('#fab').addEventListener('click', () => {
 
 function txSheet(id, prefill) {
   const t = state.transactions.find((x) => x.id === id);
+  if (t && t.transferId) {
+    const cardTx = state.transactions.find((x) => x.transferId === t.transferId && x.type === 'income');
+    if (cardTx && accountById(cardTx.accountId)) return payCardSheet(cardTx.accountId, t.transferId);
+  }
   const p = t || prefill || {};
   let type = p.type || 'expense';
   const defaultAcc = p.accountId || (txFilter !== 'all' ? txFilter : state.accounts[0].id);
@@ -344,7 +490,7 @@ function txSheet(id, prefill) {
         <input id="txAmount" type="number" inputmode="decimal" step="0.01" min="0.01" required placeholder="0.00" value="${p.amount ? (p.amount / 100).toFixed(2) : ''}">
       </label>
       <label>Account
-        <select id="txAccount">${state.accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
+        <select id="txAccount">${accountOptions()}</select>
       </label>
       ${catPickerHtml('tx')}
       <label id="txRecWrap" class="hidden">Part of a recurring payment?
@@ -422,7 +568,7 @@ function renderRecon() {
   const sel = $('#reconAccount');
   const prev = sel.value;
   sel.innerHTML = state.accounts.length
-    ? state.accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')
+    ? accountOptions()
     : `<option value="">Create an account first</option>`;
   if (state.accounts.some((a) => a.id === prev)) sel.value = prev;
   if (!$('#reconDate').value) $('#reconDate').value = today();
@@ -436,12 +582,12 @@ function renderRecon() {
   }
   list.innerHTML = recs.map((r) => {
     const diff = r.bank - r.app;
-    const status = diff === 0 ? '✅ Matches' : r.adjusted ? '🔧 Adjusted' : `⚠️ Off by ${money(diff, true)}`;
+    const status = diff === 0 ? '✅ Matches' : r.adjusted ? '🔧 Adjusted' : `⚠️ Off by ${money(isCard(r.accountId) ? -diff : diff, true)}`;
     return `<button class="item" data-rec="${r.id}">
       ${r.hasImage ? `<img class="thumb" data-img="${r.id}" alt="">` : ''}
       <div class="left" style="flex:1"><div class="title">${esc(accountName(r.accountId))}</div>
       <div class="sub">${niceDate(r.date)} · ${status}</div></div>
-      <div class="amt">${money(r.bank)}</div></button>`;
+      <div class="amt">${money(isCard(r.accountId) ? -r.bank : r.bank)}</div></button>`;
   }).join('');
   list.querySelectorAll('[data-rec]').forEach((el) => el.addEventListener('click', () => reconSheet(el.dataset.rec)));
   list.querySelectorAll('img[data-img]').forEach(async (img) => {
@@ -453,7 +599,11 @@ function renderRecon() {
 function updateReconCompare() {
   const accId = $('#reconAccount').value;
   const date = $('#reconDate').value || today();
-  const app = accId ? balance(accId, date) : 0;
+  const card = isCard(accId);
+  // For cards everything is shown as the amount owed (a positive number).
+  const app = accId ? (card ? owed(accId, date) : balance(accId, date)) : 0;
+  $('#reconBankLabel').textContent = card ? 'Amount owed shown by your bank' : 'Balance shown in your bank';
+  $('#reconAppLabel').textContent = card ? 'Owed in the app' : 'App balance';
   $('#reconApp').textContent = money(app);
   const bankRaw = $('#reconBank').value;
   const diffEl = $('#reconDiff');
@@ -502,8 +652,9 @@ $('#reconForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const accountId = $('#reconAccount').value;
   if (!accountId) return toast('Create an account first');
-  const bank = toCents($('#reconBank').value);
+  let bank = toCents($('#reconBank').value);
   if (isNaN(bank)) return toast('Type the balance shown in your bank');
+  if (isCard(accountId)) bank = -bank; // stored as a balance: owing money is negative
   const date = $('#reconDate').value || today();
   const rec = {
     id: uid(), accountId, date, bank,
@@ -530,21 +681,26 @@ async function reconSheet(id) {
   const r = state.reconciliations.find((x) => x.id === id);
   if (!r) return;
   const diff = r.bank - r.app;
+  const card = isCard(r.accountId);
+  const shown = (v) => money(card ? -v : v); // cards: show the amount owed
   const img = r.hasImage ? await dbGet('img:' + r.id) : null;
   openSheet('Reconciliation', `
     <div class="form">
       <div class="muted small">${esc(accountName(r.accountId))} · ${niceDate(r.date)}</div>
       <div class="compare">
-        <div><span class="muted small">Bank said</span><strong>${money(r.bank)}</strong></div>
-        <div><span class="muted small">App said</span><strong>${money(r.app)}</strong></div>
+        <div><span class="muted small">Bank said${card ? ' (owed)' : ''}</span><strong>${shown(r.bank)}</strong></div>
+        <div><span class="muted small">App said${card ? ' (owed)' : ''}</span><strong>${shown(r.app)}</strong></div>
       </div>
       <div class="compare" style="grid-template-columns:1fr">
         <div><span class="muted small">Difference (bank − app)</span>
         <strong class="${diff === 0 ? 'pos' : 'neg'}">${diff === 0 ? '✅ Matches' : money(diff, true)}</strong></div>
       </div>
-      ${diff !== 0 ? `<p class="muted small">${diff > 0
-        ? 'Your bank has more than the app. Maybe you forgot to log some income, or logged an expense twice.'
-        : 'Your bank has less than the app. Maybe you forgot to log an expense.'}</p>` : ''}
+      ${diff !== 0 ? `<p class="muted small">${card
+        ? (diff < 0 ? 'You owe more on the card than the app shows. Maybe you forgot to log a purchase on it.'
+          : 'You owe less on the card than the app shows. Maybe a refund or payment is missing, or a purchase was logged twice.')
+        : diff > 0
+          ? 'Your bank has more than the app. Maybe you forgot to log some income, or logged an expense twice.'
+          : 'Your bank has less than the app. Maybe you forgot to log an expense.'}</p>` : ''}
       ${r.note ? `<p><strong>Note:</strong> ${esc(r.note)}</p>` : ''}
       ${img ? `<img class="full-img" src="${img}" alt="Bank screenshot">` : ''}
       ${diff !== 0 && !r.adjusted && state.accounts.some((a) => a.id === r.accountId)
