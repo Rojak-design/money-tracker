@@ -550,6 +550,8 @@ function forecast() {
   });
 
   // Card bills: each statement's spending (actual up to today, projected after), due on the card's due date.
+  const tomorrow = addDaysISO(t, 1);
+  let remBills = 0; // card bills due in the rest of the current period
   if (hasCards) {
     const all = [current, ...periods];
     const rowIdx = (date) => periods.findIndex((p) => date >= p.start && date <= p.end);
@@ -570,19 +572,41 @@ function forecast() {
       let w = cardStatementWindow(a, addDaysISO(t, -62));
       for (let guard = 0; guard < 20 && w.from <= periods[11].end; guard++, w = cardStatementWindow(a, addDaysISO(w.to, 1))) {
         const i = rowIdx(w.due);
-        if (i < 0) continue;
+        const inRest = w.due >= tomorrow && w.due <= current.end;
+        if (i < 0 && !inRest) continue;
         const actual = cardSpendBetween(a.id, w.from, [w.to, t].sort()[0]);
         const proj = w.to > t ? projected([w.from, addDaysISO(t, 1)].sort()[1], w.to) : 0;
         const amount = Math.max(0, Math.round(actual + proj));
-        if (amount) rows[i].bills.push({ card: a, from: w.from, to: w.to, due: w.due, amount, estimated: w.to > t });
+        if (!amount) continue;
+        if (inRest) remBills += amount;
+        else rows[i].bills.push({ card: a, from: w.from, to: w.to, due: w.due, amount, estimated: w.to > t });
       }
     }
-    rows.forEach((r) => {
-      r.cardBill = r.bills.reduce((s, b) => s + b.amount, 0);
-      r.cashOut = r.spend - r.cardSpend + r.cardBill;
-    });
   }
-  return { rows, catProj, hist, partial, loggedFrom, AVG_DAYS, incAvg, n, method, lookback, hasCards, current };
+  rows.forEach((r) => {
+    r.cardBill = r.bills.reduce((s, b) => s + b.amount, 0);
+    r.cashOut = r.spend - r.cardSpend + r.cardBill; // = spend when there are no cards
+  });
+
+  // Bank balance path: today's bank balances, plus the rest of the current period, then each future period's
+  // income minus the cash that leaves the bank (spending not on cards + card bills due).
+  const restDays = Math.max(0, daysBetween(t, current.end));
+  let restIn = 0, restOut = remBills;
+  for (const r of state.recurring) {
+    const amt = amountBetween(r, tomorrow, current.end);
+    if (r.type === 'income') restIn += amt;
+    else if (!isCard(r.accountId)) restOut += amt;
+  }
+  restOut += catProj.reduce((s, c) => s + c.at(-1) * (1 - Object.values(c.share).reduce((a, b) => a + b, 0)), 0) * restDays;
+  // Other income: with pay cycles, this cycle's pay has already come in; with calendar months, assume a share of it.
+  if (!cycleMode()) restIn += incAvg * restDays / current.days;
+  const bankNow = bankAccounts().reduce((s, a) => s + balance(a.id), 0);
+  let bal = bankNow + restIn - restOut;
+  const startBal = Math.round(bal);
+  rows.forEach((r) => { bal += r.income - r.cashOut; r.bankEnd = Math.round(bal); });
+
+  return { rows, catProj, hist, partial, loggedFrom, AVG_DAYS, incAvg, n, method, lookback, hasCards, current,
+    bankNow, startBal, restIn: Math.round(restIn), restOut: Math.round(restOut) };
 }
 
 let fcSelected = 0;
@@ -610,6 +634,7 @@ function renderForecast() {
     ? `Each bar is one pay cycle (payday ${payRuleText(rule)} up to the day before the next payday), labelled by the month most of it falls in.${paydayRules().length > 1 ? ' Past cycles use the payday you had at the time.' : ''}`
     : 'Each bar is a calendar month. Set your payday under Backup → Settings to see pay cycles instead.';
 
+  const view = state.settings.fcView || 'spending';
   let html = `
     <div class="controls">
       <label>History to use (${word}s)
@@ -617,6 +642,12 @@ function renderForecast() {
       <label>Day-to-day spending
         <select id="fcMethod"><option value="trend">Follow the trend</option><option value="average">Use the average</option></select></label>
     </div>
+    <div class="segmented view-toggle" id="fcView">
+      <button type="button" data-v="spending" class="${view === 'spending' ? 'on' : ''}">Spending</button>
+      <button type="button" data-v="savings" class="${view === 'savings' ? 'on' : ''}">Savings</button>
+    </div>`;
+  if (view === 'savings') return renderSavings(el, f, html, basis, cycleNote);
+  html += `
     <div class="tiles">
       <div class="tile"><div class="label">Spending, next 12 ${word}s</div><div class="value">${money(total)}</div></div>
       <div class="tile"><div class="label">Average per ${word}</div><div class="value">${money(total / 12)}</div></div>
@@ -669,10 +700,7 @@ function renderForecast() {
   html += `<p class="muted small">${basis} Card payments, transfers, and transactions linked to a recurring payment, are left out of day-to-day spending so nothing is counted twice — when you log an instalment or loan payment, link it to its recurring payment.</p>`;
 
   el.innerHTML = html;
-  $('#fcLookback').value = String(f.lookback);
-  $('#fcMethod').value = f.method;
-  $('#fcLookback').addEventListener('change', async (e) => { state.settings.fcLookback = +e.target.value; await save(); renderForecast(); });
-  $('#fcMethod').addEventListener('change', async (e) => { state.settings.fcMethod = e.target.value; await save(); renderForecast(); });
+  bindForecastControls(f);
   const showMonth = (i) => {
     fcSelected = i;
     el.querySelectorAll('.col').forEach((c) => c.classList.toggle('sel', +c.dataset.m === i));
@@ -690,6 +718,94 @@ function renderForecast() {
           : line('Card bills due', money(0))) +
         line('Cash out of your bank accounts', money(r.cashOut), 'total') +
         `<p class="muted small" style="margin:6px 0 0">Spending paid directly from the bank, plus the card bills due in this ${word}.</p>` : '');
+  };
+  el.querySelectorAll('.col').forEach((c) => c.addEventListener('click', () => showMonth(+c.dataset.m)));
+  showMonth(fcSelected);
+}
+
+function bindForecastControls(f) {
+  $('#fcLookback').value = String(f.lookback);
+  $('#fcMethod').value = f.method;
+  $('#fcLookback').addEventListener('change', async (e) => { state.settings.fcLookback = +e.target.value; await save(); renderForecast(); });
+  $('#fcMethod').addEventListener('change', async (e) => { state.settings.fcMethod = e.target.value; await save(); renderForecast(); });
+  document.querySelectorAll('#fcView button').forEach((b) => b.addEventListener('click', async () => {
+    state.settings.fcView = b.dataset.v; await save(); renderForecast();
+  }));
+}
+
+// Savings view: income − spending for each period, and where your bank balance is heading.
+function renderSavings(el, f, html, basis, cycleNote) {
+  const { rows } = f;
+  const word = periodWord();
+  const total = rows.reduce((s, r) => s + r.net, 0);
+  const avg = total / 12;
+  const last = rows[rows.length - 1];
+  const committed = state.projects.filter((p) => !projectPlan(p).done).reduce((s, p) => s + (p.monthly || 0), 0);
+  const hasIncome = f.incAvg > 0 || state.recurring.some((r) => r.type === 'income' && !recurringSummary(r).finished);
+
+  html += `
+    <div class="tiles">
+      <div class="tile"><div class="label">You can save about</div><div class="value ${avg < 0 ? 'neg' : 'pos'}">${money(avg, true)}</div><div class="label">per ${word} on average</div></div>
+      <div class="tile"><div class="label">Saved over the next 12 ${word}s</div><div class="value ${total < 0 ? 'neg' : 'pos'}">${money(total, true)}</div></div>
+      <div class="tile wide"><div class="label">Bank balance by ${shortDate(last.end)} ${parseISO(last.end).y}</div>
+        <div class="value ${last.bankEnd < 0 ? 'neg' : ''}">${money(last.bankEnd)}</div>
+        <div class="label">Now ${money(f.bankNow)} across your bank accounts${f.hasCards ? ', with card bills paid as they fall due' : ''}</div></div>
+    </div>`;
+  if (!hasIncome) {
+    html += `<p class="status bad small">⚠️ No income in the forecast yet, so it can't tell what you'll save. Add your salary under Plan → Recurring, or log it as income in History.</p>`;
+  }
+  if (committed) {
+    const leftAfter = avg - committed;
+    html += `<div class="card small">🎯 Your savings projects plan <strong>${money(committed)}</strong> a month. ${leftAfter >= 0
+      ? `That leaves about <strong>${money(leftAfter)}</strong> a ${word} free to save on top.`
+      : `<span class="status bad">That's about ${money(-leftAfter)} a ${word} more than the forecast says you can save.</span>`}</div>`;
+  }
+
+  // Diverging bars around zero: saved above, shortfall below.
+  const maxPos = Math.max(0, ...rows.map((r) => r.net));
+  const maxNeg = Math.max(0, ...rows.map((r) => -r.net));
+  const top = maxPos ? niceMax(maxPos) : 0, bot = maxNeg ? niceMax(maxNeg) : 0;
+  const range = Math.max(1, top + bot);
+  const zero = (bot / range) * 100; // baseline, % from the bottom
+  html += `
+    <div class="card">
+      <div class="legend"><span><i style="background:var(--series-1)"></i>Saved</span>${maxNeg ? '<span><i style="background:var(--series-2)"></i>Spent more than earned</span>' : ''}</div>
+      <div class="chart" role="img" aria-label="Forecast amount saved per ${word}">
+        ${top ? `<div class="gridline" style="bottom:100%"></div><span class="gridlabel" style="bottom:100%">${shortMoney(top)}</span>` : ''}
+        <div class="gridline zero" style="bottom:${zero}%"></div><span class="gridlabel" style="bottom:${zero}%">0</span>
+        ${bot ? `<div class="gridline" style="bottom:0"></div><span class="gridlabel" style="bottom:0">−${shortMoney(bot)}</span>` : ''}
+        <div class="cols">${rows.map((r, i) => {
+          const h = (Math.abs(r.net) / range) * 100;
+          const style = r.net >= 0 ? `bottom:${zero}%;height:${h}%` : `top:${100 - zero}%;height:${h}%`;
+          return `<button class="col dv ${i === fcSelected ? 'sel' : ''}" data-m="${i}" aria-label="${esc(r.label)}: ${money(r.net, true)}">
+            ${r.net ? `<div class="dv-bar ${r.net >= 0 ? 'up' : 'down'}" style="${style}"></div>` : ''}</button>`;
+        }).join('')}</div>
+      </div>
+      <div class="chart-x">${rows.map((r) => `<span>${r.short}</span>`).join('')}</div>
+      <p class="muted small" style="margin:10px 0 0">${cycleNote} Tap a bar to see the details.</p>
+    </div>
+    <div class="card" id="fcMonth"></div>
+    <h2 class="section-title">Each ${word}</h2>
+    <div class="card">
+      <div class="grid3 head"><span>${word === 'month' ? 'Month' : 'Pay cycle'}</span><span>Saved</span><span>Bank after</span></div>
+      ${rows.map((r) => `<div class="grid3"><span>${esc(r.label)}</span>
+        <span class="${r.net < 0 ? 'neg' : 'pos'}">${money(r.net, true)}</span><span>${money(r.bankEnd)}</span></div>`).join('')}
+    </div>
+    <p class="muted small">"Saved" is expected income minus all spending in that ${word}, including spending on credit cards. "Bank after" is where your bank accounts should be at the end of the ${word}: it starts from today's balance, adds the rest of this ${word} (about ${money(f.restIn)} in, ${money(f.restOut)} out), and takes card bills out when they're due. Savings projects aren't taken out — the money stays in your accounts. ${basis}</p>`;
+
+  el.innerHTML = html;
+  bindForecastControls(f);
+  const showMonth = (i) => {
+    fcSelected = i;
+    el.querySelectorAll('.col').forEach((c) => c.classList.toggle('sel', +c.dataset.m === i));
+    const r = rows[i];
+    const line = (k, v, cls = '') => `<div class="kv ${cls}"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+    $('#fcMonth').innerHTML = `<h2>${esc(r.label)}</h2>` +
+      line('Expected income', money(r.income)) +
+      line('Spending', money(r.spend)) +
+      line('Saved', `<span class="${r.net < 0 ? 'neg' : 'pos'}">${money(r.net, true)}</span>`, 'total') +
+      (f.hasCards ? line(`Cash out of the bank (incl. card bills due)`, money(r.cashOut)) : '') +
+      line(`Bank balance at the end`, money(r.bankEnd), 'total');
   };
   el.querySelectorAll('.col').forEach((c) => c.addEventListener('click', () => showMonth(+c.dataset.m)));
   showMonth(fcSelected);
