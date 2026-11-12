@@ -5,13 +5,16 @@ Plain HTML, CSS and JavaScript — no build step. **All data stays on your phone
 
 ## Features
 - Multiple accounts (e.g. Savings, Spending) with a starting balance
+- Credit cards: log purchases on a card, see what you owe, what you spent this month and last, the next due date and available credit. **Pay card bill** moves money from a bank account to the card (not counted as spending). Reconcile a card by typing the amount owed shown by your bank. Set the card's statement closing day and due day so bills are worked out per statement cycle.
 - Log expenses and income: amount, category, date, note (tap an entry to edit or delete it)
 - Categories for every transaction, with a category filter in History. Add, rename or remove categories under **Backup → Manage categories**.
 - Daily reconciliation: attach a screenshot of your bank balance, type in the balance shown, and see the difference from the app's balance. Optionally add an adjustment to make them match, and choose which category the adjustment belongs to.
 - **Plan** tab:
   - **Recurring** – instalments, loan repayments, subscriptions, rent, salary… (amount, how often, when it ends). Shows what's due in the next 30 days and how many payments are left. Log a payment from it, or link a transaction to it when adding one.
-  - **Forecast** – the next 12 months of spending: recurring payments plus day-to-day spending (food, transport…) projected from your history, using the trend or the average of the last 3, 6 or 12 months. Tap a month for the breakdown.
+  - **Loans** – a recurring payment can end "when a loan is paid off": enter what's still owed today, the repayment and the interest (already included in what's owed, or charged on what's left at a yearly rate). The app works out the payoff date, payments left, total to pay and interest, and lists loans with what's owed on the Accounts screen.
+  - **Forecast** – the next 12 months of spending: recurring payments plus day-to-day spending (food, transport…) projected from your history, using the trend or the average of the last 3, 6 or 12 months. Tap a month for the breakdown. If you use credit cards, each month or pay cycle also shows the card bills due in it (worked out from each card's statement cycle) and the cash leaving your bank accounts.
   - **Projects** – save for a house, wedding, etc.: list the expected costs, what's saved (typed in or an account's balance) and how much you save each month, and see how many months it will take and whether you'll make a target date.
+- Pay cycles: set your payday under **Backup → Settings** (optionally moved to the Friday before when it falls on a weekend). The forecast, its chart and the category totals in History then use pay cycles (payday to the day before the next payday) instead of calendar months. If your payday changes (e.g. a new job), use **Payday changing?** and enter the first payday on the new schedule: earlier cycles keep the old payday.
 - Export / Import a backup file (includes screenshots)
 - Works offline, has light and dark mode
 
