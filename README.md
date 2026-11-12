@@ -6,7 +6,12 @@ Plain HTML, CSS and JavaScript — no build step. **All data stays on your phone
 ## Features
 - Multiple accounts (e.g. Savings, Spending) with a starting balance
 - Log expenses and income: amount, category, date, note (tap an entry to edit or delete it)
-- Daily reconciliation: attach a screenshot of your bank balance, type in the balance shown, and see the difference from the app's balance. Optionally add an adjustment to make them match.
+- Categories for every transaction, with a category filter in History. Add, rename or remove categories under **Backup → Manage categories**.
+- Daily reconciliation: attach a screenshot of your bank balance, type in the balance shown, and see the difference from the app's balance. Optionally add an adjustment to make them match, and choose which category the adjustment belongs to.
+- **Plan** tab:
+  - **Recurring** – instalments, loan repayments, subscriptions, rent, salary… (amount, how often, when it ends). Shows what's due in the next 30 days and how many payments are left. Log a payment from it, or link a transaction to it when adding one.
+  - **Forecast** – the next 12 months of spending: recurring payments plus day-to-day spending (food, transport…) projected from your history, using the trend or the average of the last 3, 6 or 12 months. Tap a month for the breakdown.
+  - **Projects** – save for a house, wedding, etc.: list the expected costs, what's saved (typed in or an account's balance) and how much you save each month, and see how many months it will take and whether you'll make a target date.
 - Export / Import a backup file (includes screenshots)
 - Works offline, has light and dark mode
 
@@ -28,7 +33,8 @@ On iPhone, the home-screen app and Safari keep separate data — use the home-sc
 ## Files
 - `index.html` – the page
 - `style.css` – the look
-- `app.js` – everything the app does
+- `app.js` – accounts, transactions, categories, reconciliation, backup
+- `plan.js` – recurring payments, savings projects and the forecast
 - `manifest.json`, `sw.js`, `icon*.png`, `icon.svg` – make it installable and work offline
 
-When you change any file, bump the version in `sw.js` (`money-tracker-v1` → `v2`) so phones pick up the update.
+When you change any file, bump the version in `sw.js` (e.g. `money-tracker-v2` → `v3`) so phones pick up the update.

@@ -1,11 +1,12 @@
 // Service worker: lets the app open with no internet connection.
 // When you change any app file, bump this version number so phones get the update.
-const CACHE = 'money-tracker-v1';
+const CACHE = 'money-tracker-v2';
 const FILES = [
   './',
   './index.html',
   './style.css',
   './app.js',
+  './plan.js',
   './manifest.json',
   './icon.svg',
   './icon-192.png',

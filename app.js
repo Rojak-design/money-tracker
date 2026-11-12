@@ -38,15 +38,35 @@ const dbKeys = () => dbDo('readonly', (s) => s.getAllKeys());
 // Amounts are stored as whole cents (integers) to avoid rounding errors.
 const emptyState = () => ({
   accounts: [],        // {id, name, start, createdAt}
-  transactions: [],    // {id, accountId, type: 'expense'|'income', amount, category, date, note}
-  reconciliations: [], // {id, accountId, date, bank, app, hasImage, note, adjusted}
-  settings: { currency: '' }
+  transactions: [],    // {id, accountId, type: 'expense'|'income', amount, category, date, note, recurringId?}
+  reconciliations: [], // {id, accountId, date, bank, app, hasImage, note, adjusted, adjustTxId?}
+  categories: null,    // {expense: [names], income: [names]} — set up on first load
+  recurring: [],       // see plan.js
+  projects: [],        // see plan.js
+  settings: { currency: 'S$', fcLookback: 6, fcMethod: 'trend' }
 });
 let state = emptyState();
+
+// Fill in anything added in newer versions of the app.
+function migrate() {
+  const base = emptyState();
+  state.settings = Object.assign(base.settings, state.settings);
+  if (!state.settings.currency) state.settings.currency = 'S$';
+  if (!Array.isArray(state.recurring)) state.recurring = [];
+  if (!Array.isArray(state.projects)) state.projects = [];
+  if (!state.categories) {
+    state.categories = {};
+    for (const type of ['expense', 'income']) {
+      const used = state.transactions.filter((t) => t.type === type && t.category).map((t) => t.category);
+      state.categories[type] = [...new Set([...DEFAULT_CATS[type], ...used])];
+    }
+  }
+}
 
 async function load() {
   const saved = await dbGet('state');
   if (saved) state = Object.assign(emptyState(), saved);
+  migrate();
 }
 function save() {
   return dbSet('state', state).catch((err) => {
@@ -100,18 +120,23 @@ function toast(msg) {
 }
 
 /* ---------- Navigation ---------- */
-const TITLES = { accounts: 'Accounts', tx: 'History', recon: 'Reconcile', backup: 'Backup' };
+const TITLES = { accounts: 'Accounts', tx: 'History', recon: 'Reconcile', plan: 'Plan', backup: 'Backup' };
 let currentView = 'accounts';
 function show(view) {
   currentView = view;
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + view));
   document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.view === view));
   $('#viewTitle').textContent = TITLES[view];
-  $('#fab').classList.toggle('hidden', view === 'backup' || view === 'recon');
+  updateFab();
   render();
   window.scrollTo(0, 0);
 }
 document.querySelectorAll('.tabbar button').forEach((b) => b.addEventListener('click', () => show(b.dataset.view)));
+
+function updateFab() {
+  const hide = currentView === 'backup' || currentView === 'recon' || (currentView === 'plan' && planTab === 'forecast');
+  $('#fab').classList.toggle('hidden', hide);
+}
 
 /* ---------- Bottom sheet ---------- */
 function openSheet(title, html) {
@@ -132,6 +157,7 @@ function render() {
   renderAccounts();
   renderTx();
   renderRecon();
+  if (typeof renderPlan === 'function') renderPlan();
   $('#currencyInput').value = state.settings.currency || '';
 }
 
@@ -156,6 +182,7 @@ function renderAccounts() {
 }
 
 let txFilter = 'all';
+let txCatFilter = 'all';
 function renderTx() {
   const sel = $('#txFilter');
   sel.innerHTML = `<option value="all">All accounts</option>` +
@@ -163,14 +190,33 @@ function renderTx() {
   if (txFilter !== 'all' && !state.accounts.some((a) => a.id === txFilter)) txFilter = 'all';
   sel.value = txFilter;
 
+  const catSel = $('#txCatFilter');
+  const cats = [...new Set([...state.categories.expense, ...state.categories.income,
+    ...state.transactions.map((t) => t.category).filter(Boolean)])].sort((a, b) => a.localeCompare(b));
+  catSel.innerHTML = `<option value="all">All categories</option>` +
+    cats.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  if (txCatFilter !== 'all' && !cats.includes(txCatFilter)) txCatFilter = 'all';
+  catSel.value = txCatFilter;
+
   const txs = state.transactions
     .filter((t) => txFilter === 'all' || t.accountId === txFilter)
+    .filter((t) => txCatFilter === 'all' || t.category === txCatFilter)
     .sort((a, b) => (b.date + b.id).localeCompare(a.date + a.id));
   const list = $('#txList');
+  const totalEl = $('#txTotal');
   if (!txs.length) {
+    totalEl.classList.add('hidden');
     list.innerHTML = `<div class="empty">No transactions yet.<br>Tap the + button to add one.</div>`;
     return;
   }
+  if (txCatFilter !== 'all') {
+    const net = txs.reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0);
+    const ym = today().slice(0, 7);
+    const month = txs.filter((t) => t.date.startsWith(ym)).reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0);
+    totalEl.innerHTML = `<span class="muted small">${esc(txCatFilter)} this month</span><strong>${money(month, true)}</strong>
+      <span class="muted small">All time: ${money(net, true)}</span>`;
+    totalEl.classList.remove('hidden');
+  } else totalEl.classList.add('hidden');
   let html = '';
   let lastDate = '';
   for (const t of txs) {
@@ -179,13 +225,14 @@ function renderTx() {
     const sub = [txFilter === 'all' ? accountName(t.accountId) : '', t.note].filter(Boolean).map(esc).join(' · ');
     html += `<button class="item" data-tx="${t.id}">
       <div class="left"><div class="title">${esc(t.category || (t.type === 'income' ? 'Income' : 'Expense'))}</div>
-      ${sub ? `<div class="sub">${sub}</div>` : ''}</div>
+      ${sub ? `<div class="sub">${t.recurringId ? '🔁 ' : ''}${sub}</div>` : t.recurringId ? '<div class="sub">🔁 Recurring</div>' : ''}</div>
       <div class="amt ${signed < 0 ? 'neg' : 'pos'}">${money(signed, true)}</div></button>`;
   }
   list.innerHTML = html;
   list.querySelectorAll('[data-tx]').forEach((el) => el.addEventListener('click', () => txSheet(el.dataset.tx)));
 }
 $('#txFilter').addEventListener('change', (e) => { txFilter = e.target.value; renderTx(); });
+$('#txCatFilter').addEventListener('change', (e) => { txCatFilter = e.target.value; renderTx(); });
 
 /* ---------- Accounts ---------- */
 $('#addAccountBtn').addEventListener('click', () => accountSheet());
@@ -236,23 +283,57 @@ function accountSheet(id) {
 
 /* ---------- Transactions ---------- */
 const DEFAULT_CATS = {
-  expense: ['Food', 'Groceries', 'Transport', 'Bills', 'Rent', 'Shopping', 'Health', 'Entertainment', 'Transfer', 'Other'],
+  expense: ['Food', 'Groceries', 'Transport', 'Bills', 'Rent', 'Shopping', 'Health', 'Entertainment',
+    'Loan repayment', 'Instalment', 'Insurance', 'Subscriptions', 'Transfer', 'Other'],
   income: ['Salary', 'Gift', 'Refund', 'Interest', 'Transfer', 'Other']
 };
 function categoriesFor(type) {
-  const used = state.transactions.filter((t) => t.type === type && t.category).map((t) => t.category);
-  return [...new Set([...DEFAULT_CATS[type], ...used])];
+  return [...state.categories[type]];
+}
+function addCategory(type, name) {
+  if (!state.categories[type].includes(name)) state.categories[type].push(name);
+}
+
+// A category <select> with a "+ New category…" option and a hidden text box for the new name.
+function catPickerHtml(prefix, label = 'Category') {
+  return `<label>${label}<select id="${prefix}Cat"></select></label>
+    <label id="${prefix}CatNewWrap" class="hidden">New category name
+      <input id="${prefix}CatNew" maxlength="30" placeholder="e.g. Pets"></label>`;
+}
+function setupCatPicker(prefix, type, selected, extra = []) {
+  const sel = $('#' + prefix + 'Cat');
+  const cats = [...extra, ...categoriesFor(type)];
+  if (selected && !cats.includes(selected)) cats.push(selected);
+  sel.innerHTML = cats.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('') + `<option value="__new">+ New category…</option>`;
+  sel.value = selected && cats.includes(selected) ? selected : cats[0];
+  $('#' + prefix + 'CatNewWrap').classList.add('hidden');
+  sel.onchange = () => {
+    const isNew = sel.value === '__new';
+    $('#' + prefix + 'CatNewWrap').classList.toggle('hidden', !isNew);
+    if (isNew) $('#' + prefix + 'CatNew').focus();
+  };
+}
+// Returns the chosen category name (adding a new one if typed), or '' if a new name is missing.
+function readCatPicker(prefix, type) {
+  let c = $('#' + prefix + 'Cat').value;
+  if (c === '__new') {
+    c = $('#' + prefix + 'CatNew').value.trim();
+    if (c) addCategory(type, c);
+  }
+  return c;
 }
 
 $('#fab').addEventListener('click', () => {
+  if (currentView === 'plan') return planFab();
   if (!state.accounts.length) { toast('Create an account first'); accountSheet(); return; }
   txSheet();
 });
 
-function txSheet(id) {
+function txSheet(id, prefill) {
   const t = state.transactions.find((x) => x.id === id);
-  let type = t ? t.type : 'expense';
-  const defaultAcc = t ? t.accountId : (txFilter !== 'all' ? txFilter : state.accounts[0].id);
+  const p = t || prefill || {};
+  let type = p.type || 'expense';
+  const defaultAcc = p.accountId || (txFilter !== 'all' ? txFilter : state.accounts[0].id);
   openSheet(t ? 'Edit transaction' : 'Add transaction', `
     <form class="form" id="txForm">
       <div class="segmented">
@@ -260,64 +341,62 @@ function txSheet(id) {
         <button type="button" data-type="income" class="income">Income</button>
       </div>
       <label>Amount
-        <input id="txAmount" type="number" inputmode="decimal" step="0.01" min="0.01" required placeholder="0.00" value="${t ? (t.amount / 100).toFixed(2) : ''}">
+        <input id="txAmount" type="number" inputmode="decimal" step="0.01" min="0.01" required placeholder="0.00" value="${p.amount ? (p.amount / 100).toFixed(2) : ''}">
       </label>
       <label>Account
         <select id="txAccount">${state.accounts.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
       </label>
-      <label>Category
-        <select id="txCat"></select>
-      </label>
-      <label id="txCatNewWrap" class="hidden">New category name
-        <input id="txCatNew" maxlength="30" placeholder="e.g. Pets">
+      ${catPickerHtml('tx')}
+      <label id="txRecWrap" class="hidden">Part of a recurring payment?
+        <select id="txRec"></select>
       </label>
       <label>Date
-        <input id="txDate" type="date" required value="${t ? t.date : today()}">
+        <input id="txDate" type="date" required value="${p.date || today()}">
       </label>
       <label>Note (optional)
-        <input id="txNote" maxlength="100" placeholder="e.g. Lunch with Sam" value="${esc(t ? t.note : '')}">
+        <input id="txNote" maxlength="100" placeholder="e.g. Lunch with Sam" value="${esc(p.note || '')}">
       </label>
       <button class="btn full" type="submit">Save</button>
       ${t ? `<button type="button" class="btn danger full" id="txDel">Delete</button>` : ''}
     </form>`);
   $('#txAccount').value = state.accounts.some((a) => a.id === defaultAcc) ? defaultAcc : state.accounts[0].id;
 
-  const catSel = $('#txCat');
-  function fillCats(selected) {
-    const cats = categoriesFor(type);
-    if (selected && !cats.includes(selected)) cats.push(selected);
-    catSel.innerHTML = cats.map((c) => `<option>${esc(c)}</option>`).join('') + `<option value="__new">+ New category…</option>`;
-    catSel.value = selected && cats.includes(selected) ? selected : cats[0];
-    $('#txCatNewWrap').classList.add('hidden');
+  const recSel = $('#txRec');
+  function fillRecurring(selected) {
+    const recs = state.recurring.filter((r) => r.type === type);
+    $('#txRecWrap').classList.toggle('hidden', !recs.length);
+    recSel.innerHTML = `<option value="">No — one-off</option>` +
+      recs.map((r) => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
+    recSel.value = recs.some((r) => r.id === selected) ? selected : '';
   }
+  recSel.addEventListener('change', () => {
+    const r = state.recurring.find((x) => x.id === recSel.value);
+    if (!r) return;
+    setupCatPicker('tx', type, r.category);
+    if (!$('#txAmount').value) $('#txAmount').value = (r.amount / 100).toFixed(2);
+  });
   function setType(newType, keepCat) {
     type = newType;
-    document.querySelectorAll('.segmented button').forEach((b) => b.classList.toggle('on', b.dataset.type === type));
-    fillCats(keepCat);
+    document.querySelectorAll('#txForm .segmented button').forEach((b) => b.classList.toggle('on', b.dataset.type === type));
+    setupCatPicker('tx', type, keepCat);
+    fillRecurring(p.recurringId);
   }
-  document.querySelectorAll('.segmented button').forEach((b) => b.addEventListener('click', () => setType(b.dataset.type)));
-  catSel.addEventListener('change', () => {
-    const isNew = catSel.value === '__new';
-    $('#txCatNewWrap').classList.toggle('hidden', !isNew);
-    if (isNew) $('#txCatNew').focus();
-  });
-  setType(type, t && t.category);
-  if (!t) setTimeout(() => $('#txAmount').focus(), 250);
+  document.querySelectorAll('#txForm .segmented button').forEach((b) => b.addEventListener('click', () => setType(b.dataset.type)));
+  setType(type, p.category);
+  if (!t && !p.amount) setTimeout(() => $('#txAmount').focus(), 250);
 
   $('#txForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const amount = toCents($('#txAmount').value);
     if (!(amount > 0)) return toast('Enter an amount above 0');
-    let category = catSel.value;
-    if (category === '__new') {
-      category = $('#txCatNew').value.trim();
-      if (!category) return toast('Type a name for the new category');
-    }
+    const category = readCatPicker('tx', type);
+    if (!category) return toast('Type a name for the new category');
     const data = {
       type, amount, category,
       accountId: $('#txAccount').value,
       date: $('#txDate').value || today(),
-      note: $('#txNote').value.trim()
+      note: $('#txNote').value.trim(),
+      recurringId: recSel.value || undefined
     };
     if (t) Object.assign(t, data);
     else state.transactions.push({ id: uid(), ...data });
@@ -469,21 +548,40 @@ async function reconSheet(id) {
       ${r.note ? `<p><strong>Note:</strong> ${esc(r.note)}</p>` : ''}
       ${img ? `<img class="full-img" src="${img}" alt="Bank screenshot">` : ''}
       ${diff !== 0 && !r.adjusted && state.accounts.some((a) => a.id === r.accountId)
-        ? `<button class="btn full" id="recFix">Add ${money(diff, true)} adjustment to fix it</button>` : ''}
+        ? `<div class="card-inset form">
+            <strong>Fix it with an adjustment</strong>
+            <p class="muted small" style="margin:0">Adds ${diff > 0 ? 'income' : 'an expense'} of ${money(Math.abs(diff))} so the app matches your bank. Pick what it was most likely for.</p>
+            ${catPickerHtml('adj', 'Category for the adjustment')}
+            <button class="btn full" id="recFix">Add ${money(diff, true)} adjustment</button>
+          </div>` : ''}
+      ${r.adjusted ? (() => {
+        const at = state.transactions.find((x) => x.id === r.adjustTxId);
+        return at ? `<button class="btn secondary full" id="recAdjTx">Adjustment: ${esc(at.category)} ${money(at.type === 'income' ? at.amount : -at.amount, true)} — change category</button>` : '';
+      })() : ''}
       <button class="btn danger full" id="recDel">Delete this record</button>
     </div>`);
   const fix = $('#recFix');
-  if (fix) fix.addEventListener('click', async () => {
-    state.transactions.push({
+  const adjType = diff > 0 ? 'income' : 'expense';
+  if (fix) {
+    setupCatPicker('adj', adjType, 'Adjustment (unknown)', ['Adjustment (unknown)']);
+    fix.addEventListener('click', async () => {
+    const category = readCatPicker('adj', adjType);
+    if (!category) return toast('Type a name for the new category');
+    const tx = {
       id: uid(), accountId: r.accountId, date: r.date,
-      type: diff > 0 ? 'income' : 'expense', amount: Math.abs(diff),
-      category: 'Adjustment', note: 'Reconciliation adjustment'
-    });
+      type: adjType, amount: Math.abs(diff),
+      category, note: 'Reconciliation adjustment'
+    };
+    state.transactions.push(tx);
     r.adjusted = true;
+    r.adjustTxId = tx.id;
     await save();
     closeSheet(); render();
     toast('Adjustment added — balances now match');
   });
+  }
+  const adjBtn = $('#recAdjTx');
+  if (adjBtn) adjBtn.addEventListener('click', () => txSheet(r.adjustTxId));
   $('#recDel').addEventListener('click', async () => {
     if (!confirm('Delete this reconciliation record?')) return;
     state.reconciliations = state.reconciliations.filter((x) => x.id !== r.id);
@@ -499,7 +597,7 @@ $('#exportBtn').addEventListener('click', async () => {
   for (const r of state.reconciliations) {
     if (r.hasImage) { const d = await dbGet('img:' + r.id); if (d) images[r.id] = d; }
   }
-  const backup = { app: 'money-tracker', version: 1, exportedAt: new Date().toISOString(), state, images };
+  const backup = { app: 'money-tracker', version: 2, exportedAt: new Date().toISOString(), state, images };
   const name = `money-backup-${today()}.json`;
   const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
   const file = new File([blob], name, { type: 'application/json' });
@@ -533,10 +631,10 @@ $('#importFile').addEventListener('change', async (e) => {
     if (!confirm(`Import backup from ${data.exportedAt ? new Date(data.exportedAt).toLocaleString() : 'unknown date'}?\n\n${summary}\n\nThis REPLACES all data currently in the app.`)) return;
     await dbClear();
     state = Object.assign(emptyState(), s);
-    state.settings = Object.assign(emptyState().settings, s.settings);
+    migrate();
     await save();
     for (const [id, img] of Object.entries(data.images || {})) await dbSet('img:' + id, img);
-    txFilter = 'all';
+    txFilter = 'all'; txCatFilter = 'all';
     render();
     toast('Backup imported');
   } catch (err) {
@@ -557,10 +655,64 @@ $('#wipeBtn').addEventListener('click', async () => {
   if (!confirm('Are you really sure? Export a backup first if you might need it.')) return;
   await dbClear();
   state = emptyState();
+  migrate();
   await save();
   render();
   toast('All data deleted');
 });
+
+/* ---------- Manage categories ---------- */
+$('#manageCatsBtn').addEventListener('click', () => categoriesSheet('expense'));
+
+function categoriesSheet(type) {
+  const count = (c) => state.transactions.filter((t) => t.type === type && t.category === c).length;
+  openSheet('Categories', `
+    <div class="form">
+      <div class="segmented">
+        <button type="button" data-ct="expense" class="expense ${type === 'expense' ? 'on' : ''}">Spending</button>
+        <button type="button" data-ct="income" class="income ${type === 'income' ? 'on' : ''}">Income</button>
+      </div>
+      <form class="row gap" id="catAddForm" style="margin:0">
+        <input id="catAddName" maxlength="30" placeholder="New category name">
+        <button class="btn" type="submit">Add</button>
+      </form>
+      <div class="list" style="margin:0">
+        ${state.categories[type].map((c, i) => `<div class="item static">
+          <div class="left"><div class="title">${esc(c)}</div><div class="sub">${count(c)} transaction(s)</div></div>
+          <div class="row" style="gap:4px">
+            <button class="icon-btn" data-ren="${i}" aria-label="Rename ${esc(c)}">✏️</button>
+            <button class="icon-btn" data-del="${i}" aria-label="Remove ${esc(c)}">🗑️</button>
+          </div></div>`).join('')}
+      </div>
+      <p class="muted small">Removing a category only takes it off the list — past transactions keep it. Renaming also renames past transactions and recurring payments.</p>
+    </div>`);
+  document.querySelectorAll('[data-ct]').forEach((b) => b.addEventListener('click', () => categoriesSheet(b.dataset.ct)));
+  $('#catAddForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = $('#catAddName').value.trim();
+    if (!name) return;
+    if (state.categories[type].includes(name)) return toast('That category already exists');
+    addCategory(type, name);
+    await save(); render(); categoriesSheet(type);
+  });
+  document.querySelectorAll('[data-ren]').forEach((b) => b.addEventListener('click', async () => {
+    const old = state.categories[type][+b.dataset.ren];
+    const name = (prompt(`Rename “${old}” to:`, old) || '').trim();
+    if (!name || name === old) return;
+    if (state.categories[type].includes(name)) return toast('That category already exists');
+    state.categories[type][+b.dataset.ren] = name;
+    for (const t of state.transactions) if (t.type === type && t.category === old) t.category = name;
+    for (const r of state.recurring) if (r.type === type && r.category === old) r.category = name;
+    await save(); render(); categoriesSheet(type);
+  }));
+  document.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+    const c = state.categories[type][+b.dataset.del];
+    if (state.categories[type].length <= 1) return toast('Keep at least one category');
+    if (!confirm(`Remove “${c}” from the list?`)) return;
+    state.categories[type].splice(+b.dataset.del, 1);
+    await save(); render(); categoriesSheet(type);
+  }));
+}
 
 async function showStorageInfo() {
   const el = $('#storageInfo');

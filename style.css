@@ -12,6 +12,9 @@
   --radius: 14px;
   --tabbar-h: 64px;
   --safe-b: env(safe-area-inset-bottom, 0px);
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --grid: #e3e7eb;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -26,6 +29,9 @@
     --green: #4ade80;
     --red: #fb923c;
     --danger: #f87171;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --grid: #2b3338;
   }
 }
 
@@ -138,7 +144,7 @@ select { appearance: none; -webkit-appearance: none;
 
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 7;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   background: var(--card); border-top: 1px solid var(--line);
   padding-bottom: var(--safe-b); height: calc(var(--tabbar-h) + var(--safe-b));
 }
@@ -172,3 +178,63 @@ select { appearance: none; -webkit-appearance: none;
   background: #222; color: #fff; padding: 10px 16px; border-radius: 20px; font-size: 14px;
   max-width: calc(100% - 32px); text-align: center;
 }
+
+/* ---------- Added: categories, plan, forecast ---------- */
+.row.gap > select { flex: 1; min-width: 0; }
+.item.static { cursor: default; }
+.item.static:active { opacity: 1; }
+.total-line { display: flex; flex-direction: column; gap: 2px; padding: 12px 16px; }
+.total-line strong { font-size: 20px; }
+.card-inset { background: var(--bg); border-radius: 12px; padding: 14px; }
+
+.segmented.three { grid-template-columns: 1fr 1fr 1fr; margin-bottom: 14px; background: var(--card); }
+.segmented.three button.on { background: var(--primary); color: #fff; }
+@media (prefers-color-scheme: dark) { .segmented.three button.on { color: #06201d; } }
+.segmented button.on:not(.expense):not(.income) { box-shadow: 0 1px 2px rgba(0,0,0,.1); }
+
+.controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.controls label { font-size: 12px; color: var(--muted); }
+.controls select { padding: 10px 34px 10px 12px; }
+
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.tile { background: var(--card); border-radius: var(--radius); padding: 12px 14px; }
+.tile .label { font-size: 13px; color: var(--muted); }
+.tile .value { font-size: 22px; font-weight: 700; margin-top: 2px; }
+.tile.wide { grid-column: 1 / -1; }
+
+.chart { position: relative; height: 180px; margin: 8px 0 4px; }
+.chart .gridline { position: absolute; left: 0; right: 0; border-top: 1px solid var(--grid); }
+.chart .gridline { left: 34px; }
+.chart .gridlabel { position: absolute; left: 0; width: 30px; text-align: right; font-size: 11px; color: var(--muted); transform: translateY(50%); }
+.chart .cols { position: absolute; inset: 0 0 0 34px; display: flex; align-items: flex-end; gap: 4px; }
+.chart .col { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px;
+  border: 0; background: transparent; padding: 0; cursor: pointer; border-radius: 6px; }
+.chart .col.sel { background: var(--primary-soft); }
+.chart .seg { width: 70%; margin: 0 auto; min-height: 0; }
+.chart .seg.s1 { background: var(--series-1); border-radius: 0 0 1px 1px; }
+.chart .seg.s2 { background: var(--series-2); }
+.chart .col .seg:first-child { border-top-left-radius: 4px; border-top-right-radius: 4px; }
+.chart-x { display: flex; gap: 4px; font-size: 11px; color: var(--muted); padding-left: 34px; }
+.chart-x span { flex: 1; text-align: center; }
+.legend { display: flex; gap: 14px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+.kv { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+.kv:last-child { border-bottom: 0; }
+.kv .k { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.kv .v { font-weight: 600; white-space: nowrap; }
+.kv.total { font-weight: 700; }
+.kv.total .k { color: var(--text); }
+
+.progress { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 8px; }
+.progress > div { height: 100%; background: var(--primary); border-radius: 4px; }
+.item.block { display: block; }
+.item.block .row { justify-content: space-between; gap: 12px; }
+
+.cost-row { display: grid; grid-template-columns: 1fr 110px 36px; gap: 6px; align-items: center; }
+.cost-row input { padding: 10px; }
+.status { font-weight: 600; }
+.status.good { color: var(--green); }
+.status.bad { color: var(--red); }
+.trend-up { color: var(--red); }
+.trend-down { color: var(--green); }

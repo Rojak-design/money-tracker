@@ -35,7 +35,9 @@
     <section id="view-tx" class="view">
       <div class="row gap">
         <select id="txFilter" aria-label="Filter by account"></select>
+        <select id="txCatFilter" aria-label="Filter by category"></select>
       </div>
+      <div id="txTotal" class="card total-line hidden"></div>
       <div id="txList" class="list"></div>
     </section>
 
@@ -69,6 +71,18 @@
       <div id="reconList" class="list"></div>
     </section>
 
+    <!-- PLAN: forecast, recurring payments, savings projects -->
+    <section id="view-plan" class="view">
+      <div class="segmented three" id="planTabs">
+        <button type="button" data-plan="forecast" class="on">Forecast</button>
+        <button type="button" data-plan="recurring">Recurring</button>
+        <button type="button" data-plan="projects">Projects</button>
+      </div>
+      <div id="plan-forecast" class="plan-pane"></div>
+      <div id="plan-recurring" class="plan-pane hidden"></div>
+      <div id="plan-projects" class="plan-pane hidden"></div>
+    </section>
+
     <!-- BACKUP -->
     <section id="view-backup" class="view">
       <div class="card form">
@@ -85,6 +99,7 @@
         <label>Currency symbol
           <input type="text" id="currencyInput" maxlength="4" placeholder="e.g. $ or £ or RM">
         </label>
+        <button class="btn secondary full" id="manageCatsBtn">Manage categories</button>
         <p id="storageInfo" class="muted small"></p>
       </div>
       <div class="card form">
@@ -100,6 +115,7 @@
     <button data-view="accounts" class="active"><span>🏦</span>Accounts</button>
     <button data-view="tx"><span>📋</span>History</button>
     <button data-view="recon"><span>✅</span>Reconcile</button>
+    <button data-view="plan"><span>📈</span>Plan</button>
     <button data-view="backup"><span>💾</span>Backup</button>
   </nav>
 
@@ -118,5 +134,6 @@
   <div id="toast" class="toast hidden"></div>
 
   <script src="app.js"></script>
+  <script src="plan.js"></script>
 </body>
 </html>
