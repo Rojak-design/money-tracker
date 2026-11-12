@@ -685,7 +685,10 @@ function txSheet(id, prefill) {
         <button type="button" data-type="income" class="income">Income</button>
         <button type="button" data-type="refund" class="refund">Money back</button>
       </div>
-      ${t ? '' : `<button type="button" class="link-btn" id="txToTransfer">⇄ Moving money between your own accounts? Use Transfer</button>`}
+      ${t ? '' : `<button type="button" class="link-btn" id="txToTransfer">⇄ Moving money between your own accounts? Use Transfer</button>
+      <label class="btn secondary full file-btn">📷 Fill from a screenshot (receipt, payment, ride…)
+        <input type="file" id="txShot" accept="image/*"></label>
+      <div id="txOcr" class="ocr-box small hidden" aria-live="polite"></div>`}
       <p id="txRefundHint" class="muted small hidden" style="margin:-4px 0 0">For refunds, or a friend paying you back for something you paid for. It's added to the account and taken off that category's spending, so the category shows what you spent yourself.</p>
       <label>Amount
         <input id="txAmount" type="number" inputmode="decimal" step="0.01" min="0.01" required placeholder="0.00" value="${p.amount ? (p.amount / 100).toFixed(2) : ''}">
@@ -786,6 +789,14 @@ function txSheet(id, prefill) {
   document.querySelectorAll('#txForm .segmented button').forEach((b) => b.addEventListener('click', () => setType(b.dataset.type)));
   setType(type, p.category);
   if (!t && !p.amount) setTimeout(() => { const el = $('#txAmount'); if (el) el.focus(); }, 250);
+  if ($('#txShot')) {
+    let catTouched = false;
+    $('#txCat').addEventListener('change', () => { catTouched = true; });
+    $('#txShot').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) fillTxFromScreenshot(file, { catTouched: () => catTouched, catType });
+    });
+  }
   if ($('#txToTransfer')) $('#txToTransfer').addEventListener('click', () => {
     if (state.accounts.length < 2) return toast('Add a second account to transfer between');
     transferSheet({ fromId: $('#txAccount').value, amount: toCents($('#txAmount').value) || 0 });
@@ -932,12 +943,14 @@ function loadScript(src) {
     document.head.appendChild(s);
   });
 }
+let ocrProgress = null;
 async function getOcrWorker(onProgress) {
+  ocrProgress = onProgress || null;
   if (ocrWorker) return ocrWorker;
   if (!window.Tesseract) await loadScript('ocr/tesseract.min.js');
   ocrWorker = await Tesseract.createWorker('eng', 1 /* LSTM only */, {
     workerPath: 'ocr/worker.min.js', corePath: 'ocr/core', langPath: 'ocr/lang', gzip: true, workerBlobURL: false,
-    logger: (m) => { if (onProgress && m.status === 'recognizing text') onProgress(m.progress); }
+    logger: (m) => { if (ocrProgress && m.status === 'recognizing text') ocrProgress(m.progress); }
   });
   return ocrWorker;
 }
@@ -1261,6 +1274,120 @@ $('#wipeBtn').addEventListener('click', async () => {
   render();
   toast('All data deleted');
 });
+
+/* ---------- Filling a transaction from a screenshot (receipt, payment confirmation, ride…) ----------
+   Reads the screenshot on the phone (same bundled reader as Reconcile), then suggests the amount paid and a note
+   for what it was, plus a category for well-known merchants. Everything stays editable. */
+
+// Well-known merchants: [pattern, note, category]
+const MERCHANTS = [
+  [/\b(any)?tada\b/i, 'TADA ride', 'Transport'], [/\bgrab\s*(car|taxi|ride|share)|\bjustgrab\b|\bgrabcar\b/i, 'Grab ride', 'Transport'],
+  [/\bgrab\s*food\b|\bgrabfood\b/i, 'GrabFood', 'Food'], [/\bgrabmart\b/i, 'GrabMart', 'Groceries'], [/\bgojek\b/i, 'Gojek ride', 'Transport'],
+  [/\bcomfort\s*delgro\b|\bcdg\s*zig\b|\bzig\b/i, 'Taxi (ComfortDelGro)', 'Transport'], [/\bryde\b/i, 'Ryde ride', 'Transport'],
+  [/\bsimplygo\b|\btransitlink\b|\bmrt\b/i, 'Public transport', 'Transport'], [/\bfoodpanda\b/i, 'foodpanda', 'Food'], [/\bdeliveroo\b/i, 'Deliveroo', 'Food'],
+  [/\bshopee\b/i, 'Shopee', 'Shopping'], [/\blazada\b/i, 'Lazada', 'Shopping'], [/\bamazon\b/i, 'Amazon', 'Shopping'], [/\btaobao\b/i, 'Taobao', 'Shopping'],
+  [/\bfair\s*price\b|\bntuc\b/i, 'NTUC FairPrice', 'Groceries'], [/\bcold\s*storage\b/i, 'Cold Storage', 'Groceries'], [/\bsheng\s*siong\b/i, 'Sheng Siong', 'Groceries'],
+  [/\bgiant\b/i, 'Giant', 'Groceries'], [/\bdon\s*don\s*donki\b|\bdonki\b/i, 'Don Don Donki', 'Groceries'],
+  [/\bstarbucks\b/i, 'Starbucks', 'Food'], [/\bmcdonald'?s\b/i, "McDonald's", 'Food'], [/\bkfc\b/i, 'KFC', 'Food'], [/\bchagee\b/i, 'Chagee', 'Food'],
+  [/\bkoi\b/i, 'KOI', 'Food'], [/\bliho\b/i, 'LiHO', 'Food'], [/\bya\s*kun\b/i, 'Ya Kun', 'Food'], [/\btoast\s*box\b/i, 'Toast Box', 'Food'],
+  [/\bguardian\b/i, 'Guardian', 'Health'], [/\bwatsons\b/i, 'Watsons', 'Health'], [/\buniqlo\b/i, 'Uniqlo', 'Shopping'], [/\bikea\b/i, 'IKEA', 'Shopping'],
+  [/\bnetflix\b/i, 'Netflix', 'Subscriptions'], [/\bspotify\b/i, 'Spotify', 'Subscriptions'], [/\bdisney\+?/i, 'Disney+', 'Subscriptions'],
+  [/\bklook\b/i, 'Klook', 'Entertainment'], [/\bagoda\b/i, 'Agoda', 'Transport'], [/\bbooking\.com\b/i, 'Booking.com', 'Transport'],
+  [/\bsingapore\s*airlines\b|\bscoot\b|\bjetstar\b|\bairasia\b/i, 'Flight', 'Transport'],
+  [/\bsp\s*(group|services)\b/i, 'SP utilities', 'Bills'], [/\bsingtel\b|\bstarhub\b|\bm1\b|\bcircles\.?life\b|\bgomo\b/i, 'Mobile / internet bill', 'Bills']
+];
+
+// Amounts on a receipt or payment screen, best guess first: [{cents, label}].
+// Prefers amounts labelled total / paid / fare, with a currency, in large text; skips promos (cashback, up to, vouchers…).
+function findSpendCandidates(lines) {
+  const re = /(S\$|SGD|US\$|RM|\$)?\s*(\d{1,3}(?:[,\s]\d{3})+|\d+)[.,](\d{2})(?![\d%])\s*(SGD|S\$)?/g;
+  const heights = lines.map((l) => l.h).filter(Boolean).sort((a, b) => a - b);
+  const medianH = heights.length ? heights[Math.floor(heights.length / 2)] : 0;
+  const found = new Map();
+  lines.forEach((l, i) => {
+    for (const m of l.text.matchAll(re)) {
+      const cents = parseInt(m[2].replace(/[,\s]/g, ''), 10) * 100 + parseInt(m[3], 10);
+      if (!(cents > 0) || cents > 10000000) continue;
+      // Labels count from the same line, or the line above if that line has no amount of its own.
+      const prevText = (lines[i - 1] || {}).text || '';
+      const same = l.text.toLowerCase();
+      const ctx = `${/\d[.,]\d{2}/.test(prevText) ? '' : prevText.toLowerCase()} ${same}`;
+      let score = (m[1] || m[4]) ? 3 : 0;
+      if (/\b(grand\s*)?total\b|\bamount\b|you\s*paid|\bpaid\b|\bpayment\b|charged|\bfare\b|to\s*pay|\bprice\b/.test(ctx)) score += 4;
+      if (/sub-?\s*total/.test(same)) score -= 5;
+      if (/cashback|up\s*to|discount|voucher|promo|\bsave\b|points|rebate|reward|balance|limit|min(imum)?\b|\bgst\b|\btax\b|change|\btip\b/.test(same)) score -= 6;
+      if (medianH && l.h >= medianH * 1.3) score += 2;
+      const label = l.text.replace(m[0], '').replace(/[^\w\s&()'.-]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
+      const prev = found.get(cents);
+      if (!prev || score > prev.score) found.set(cents, { cents, score, label, order: i });
+    }
+  });
+  return [...found.values()].sort((a, b) => b.score - a.score || a.order - b.order);
+}
+
+// Possible notes: a known merchant first, then short lines of text from the screenshot (names, places).
+function noteCandidates(text, lines) {
+  const out = [];
+  let merchant = null;
+  for (const [re, note, cat] of MERCHANTS) if (re.test(text)) { merchant = { note, cat }; out.push(note); break; }
+  const paidTo = text.match(/(?:paid|pay|sent|transfer(?:red)?)\s+(?:S?\$?[\d,.]+\s+)?to\s+([A-Za-z][A-Za-z0-9&'., -]{2,38})/i);
+  if (paidTo) out.push(paidTo[1].trim());
+  const skip = /successful|you\s*paid|transfer|\bref\b|reference|cashback|shopback|google\s*pay|apple\s*pay|paylah|call|chat|share|known\s*for|service|driving|vehicle|on\s*your\s*way|missing\s*out|account|payment\s*method|receipt|thank|download|rate|tip/i;
+  for (const l of lines) {
+    const s = l.text.replace(/[^\w\s&()'.,/-]/g, ' ').replace(/\s+/g, ' ').trim().replace(/^to\s+/i, '');
+    if (s.length < 4 || s.length > 40 || /\d[.,]\d{2}/.test(s) || skip.test(s)) continue;
+    if ((s.match(/[a-z]/gi) || []).length < s.length * 0.6) continue; // mostly letters
+    if (!out.includes(s)) out.push(s);
+    if (out.length >= 5) break;
+  }
+  return { notes: out, merchant };
+}
+
+let txOcrRun = 0;
+async function fillTxFromScreenshot(file, opts) {
+  const run = ++txOcrRun;
+  const box = $('#txOcr');
+  const show = (html) => { if (run === txOcrRun && box) { box.innerHTML = html; box.classList.remove('hidden'); } };
+  show('🔎 Reading your screenshot…');
+  let data;
+  try {
+    const worker = await getOcrWorker((p) => show(`🔎 Reading your screenshot… ${Math.round(p * 100)}%`));
+    ({ data } = await worker.recognize(file));
+  } catch (err) {
+    console.warn(err);
+    show('Couldn\'t read the screenshot on this phone — type the details below.');
+    return;
+  }
+  if (run !== txOcrRun || !$('#txForm')) return;
+  const lines = (data.lines && data.lines.length ? data.lines.map((l) => ({ text: l.text.trim(), h: l.bbox ? l.bbox.y1 - l.bbox.y0 : 0 }))
+    : data.text.split(/\n+/).map((t) => ({ text: t.trim(), h: 0 }))).filter((l) => l.text);
+  const amounts = findSpendCandidates(lines);
+  const { notes, merchant } = noteCandidates(data.text, lines);
+  if (!amounts.length && !notes.length) { show('Couldn\'t find an amount in the screenshot — type the details below.'); return; }
+  const setAmount = (c) => {
+    $('#txAmount').value = (c / 100).toFixed(2);
+    box.querySelectorAll('[data-amt]').forEach((x) => x.classList.toggle('on', +x.dataset.amt === c));
+  };
+  const setNote = (n) => {
+    $('#txNote').value = n;
+    box.querySelectorAll('[data-note]').forEach((x) => x.classList.toggle('on', x.dataset.note === n));
+  };
+  let catMsg = '';
+  if (merchant && !opts.catTouched() && opts.catType() === 'expense' && categoriesFor('expense').includes(merchant.cat)) {
+    $('#txCat').value = merchant.cat;
+    $('#txCat').dispatchEvent(new Event('change'));
+    catMsg = ` Category set to <strong>${esc(merchant.cat)}</strong>.`;
+  }
+  show(`<div>✅ Filled in${amounts.length ? ` <strong>${money(amounts[0].cents)}</strong>` : ''}${notes.length ? ` and the note “${esc(notes[0])}”` : ''}.${catMsg} Check it matches — you can change anything.</div>
+    ${amounts.length > 1 ? `<div class="muted small" style="margin-top:6px">Other amounts in the screenshot:</div>
+      <div class="chips">${amounts.slice(0, 5).map((c) => `<button type="button" class="chip" data-amt="${c.cents}">${money(c.cents)}${c.label ? `<span>${esc(c.label)}</span>` : ''}</button>`).join('')}</div>` : ''}
+    ${notes.length > 1 ? `<div class="muted small" style="margin-top:6px">Other notes:</div>
+      <div class="chips">${notes.map((n) => `<button type="button" class="chip" data-note="${esc(n)}">${esc(n)}</button>`).join('')}</div>` : ''}`);
+  box.querySelectorAll('[data-amt]').forEach((x) => x.addEventListener('click', () => setAmount(+x.dataset.amt)));
+  box.querySelectorAll('[data-note]').forEach((x) => x.addEventListener('click', () => setNote(x.dataset.note)));
+  if (amounts.length) setAmount(amounts[0].cents);
+  if (notes.length) setNote(notes[0]);
+}
 
 /* ---------- Manage categories ---------- */
 $('#manageCatsBtn').addEventListener('click', () => categoriesSheet('expense'));
