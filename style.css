@@ -303,3 +303,7 @@ label.check input { width: 22px; height: 22px; flex: none; }
 .cost-when label, .cost-count { font-size: 12px; font-weight: 600; color: var(--muted); gap: 4px; }
 .cost-when input, .cost-when select, .cost-count input { padding: 9px 10px; font-size: 15px; }
 .cost-when select { padding-right: 30px; }
+
+/* Transfers */
+.link-btn { border: 0; background: none; color: var(--primary); font: inherit; font-size: 14px; font-weight: 600; text-align: left; padding: 0; cursor: pointer; }
+#xferForm .swap { align-self: center; font-size: 22px; margin: -8px 0 -10px; color: var(--primary); }

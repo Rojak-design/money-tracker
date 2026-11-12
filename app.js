@@ -276,9 +276,20 @@ function renderTx() {
     if (t.date !== lastDate) { html += `<div class="date-head">${niceDate(t.date)}</div>`; lastDate = t.date; }
     const signed = t.type === 'income' ? t.amount : -t.amount;
     const refundTag = t.refund ? '<span class="tag">money back</span>' : '';
-    const sub = [txFilter === 'all' ? accountName(t.accountId) : '', t.note].filter(Boolean).map(esc).join(' · ');
+    let title = t.category || (t.type === 'income' ? 'Income' : 'Expense');
+    let sub = [txFilter === 'all' ? accountName(t.accountId) : '', t.note].filter(Boolean).map(esc).join(' · ');
+    if (t.transferId) {
+      // Show transfers as "From → To", with the note (or "Card payment") underneath.
+      const pair = state.transactions.filter((x) => x.transferId === t.transferId);
+      const out = pair.find((x) => x.type === 'expense'), inn = pair.find((x) => x.type === 'income');
+      if (out && inn) {
+        title = `${accountName(out.accountId)} → ${accountName(inn.accountId)}`;
+        sub = [txFilter === 'all' ? `${t.type === 'income' ? 'Into' : 'Out of'} ${accountName(t.accountId)}` : '',
+          t.userNote || (isCard(inn.accountId) ? 'Card payment' : 'Transfer')].filter(Boolean).map(esc).join(' · ');
+      }
+    }
     html += `<button class="item" data-tx="${t.id}">
-      <div class="left"><div class="title">${esc(t.category || (t.type === 'income' ? 'Income' : 'Expense'))}${refundTag}</div>
+      <div class="left"><div class="title">${esc(title)}${refundTag}</div>
       ${sub ? `<div class="sub">${t.recurringId ? '🔁 ' : ''}${sub}</div>` : t.recurringId ? '<div class="sub">🔁 Recurring</div>' : ''}</div>
       <div class="amt ${signed < 0 ? 'neg' : 'pos'}">${money(signed, true)}</div></button>`;
   }
@@ -388,6 +399,7 @@ function renderSpendPie() {
 
 /* ---------- Accounts ---------- */
 $('#addAccountBtn').addEventListener('click', () => accountSheet());
+$('#transferBtn').addEventListener('click', () => transferSheet());
 
 function accountSheet(id) {
   const a = state.accounts.find((x) => x.id === id);
@@ -489,52 +501,99 @@ function accountSheet(id) {
   }
 }
 
-/* ---------- Credit card bill payments ---------- */
-// A payment is two linked transactions: money out of the bank account, money into the card.
-function payCardSheet(cardId, pairId) {
+/* ---------- Transfers between your own accounts (incl. paying a card bill) ---------- */
+// A transfer is two linked transactions sharing a transferId: money out of one account, money into another.
+// Both use the category 'Transfer', so they're never counted as spending or income.
+function payCardSheet(cardId) {
   const card = accountById(cardId);
-  const banks = bankAccounts();
-  if (!banks.length) return toast('Add a bank account to pay the card from');
+  if (!bankAccounts().length) return toast('Add a bank account to pay the card from');
+  transferSheet({ toId: cardId, fromId: card.payFromId, amount: Math.max(0, owed(cardId)) });
+}
+
+function transferSheet(opts = {}) {
+  if (state.accounts.length < 2) return toast('Add a second account to transfer between');
+  const pairId = opts.pairId;
   const existing = pairId ? state.transactions.filter((t) => t.transferId === pairId) : [];
   const out = existing.find((t) => t.type === 'expense');
-  const amt = out ? out.amount : Math.max(0, owed(cardId));
-  openSheet(out ? 'Card payment' : `Pay ${card.name}`, `
-    <form class="form" id="payForm">
-      ${out ? '' : `<p class="muted small" style="margin:0">You owe ${money(Math.max(0, owed(cardId)))} on this card.</p>`}
-      <label>Amount paid
-        <input id="payAmt" type="number" inputmode="decimal" step="0.01" min="0.01" required value="${amt ? (amt / 100).toFixed(2) : ''}">
+  const inn = existing.find((t) => t.type === 'income');
+  const fromId = out ? out.accountId : opts.fromId;
+  const toId = inn ? inn.accountId : opts.toId;
+  const amt = out ? out.amount : opts.amount || 0;
+  const userNote = out ? out.userNote || '' : '';
+  const withBal = (list) => list.map((a) => `<option value="${a.id}">${a.type === 'credit' ? '💳 ' : ''}${esc(a.name)} · ${a.type === 'credit'
+    ? money(Math.max(0, owed(a.id))) + ' owed' : money(balance(a.id))}</option>`).join('');
+  openSheet(out ? 'Transfer' : 'Transfer between accounts', `
+    <form class="form" id="xferForm">
+      <label>From
+        <select id="xfFrom">${withBal(state.accounts)}</select>
       </label>
-      <label>Paid from
-        <select id="payFrom">${accountOptions(banks)}</select>
+      <button type="button" class="icon-btn swap" id="xfSwap" aria-label="Swap from and to">⇅</button>
+      <label>To
+        <select id="xfTo">${withBal(state.accounts)}</select>
+      </label>
+      <p id="xfOwed" class="muted small hidden" style="margin:-4px 0 0"></p>
+      <label>Amount
+        <input id="xfAmt" type="number" inputmode="decimal" step="0.01" min="0.01" required placeholder="0.00" value="${amt ? (amt / 100).toFixed(2) : ''}">
       </label>
       <label>Date
-        <input id="payDate" type="date" required value="${out ? out.date : today()}">
+        <input id="xfDate" type="date" required value="${out ? out.date : today()}">
       </label>
-      <p class="muted small" style="margin:0">This moves money from the bank account to the card. It isn't counted as spending — the purchases on the card already were.</p>
-      <button class="btn full" type="submit">${out ? 'Save' : 'Record payment'}</button>
-      ${out ? '<button type="button" class="btn danger full" id="payDel">Delete payment</button>' : ''}
+      <label>Note (optional)
+        <input id="xfNote" maxlength="100" placeholder="e.g. Salary to savings" value="${esc(userNote)}">
+      </label>
+      <p class="muted small" style="margin:0" id="xfHint"></p>
+      <button class="btn full" type="submit">${out ? 'Save' : 'Transfer'}</button>
+      ${out ? '<button type="button" class="btn danger full" id="xfDel">Delete transfer</button>' : ''}
     </form>`);
-  const from = out ? out.accountId : card.payFromId;
-  if (banks.some((b) => b.id === from)) $('#payFrom').value = from;
-  $('#payForm').addEventListener('submit', async (e) => {
+  const banks = bankAccounts();
+  $('#xfFrom').value = state.accounts.some((a) => a.id === fromId) ? fromId : (banks[0] || state.accounts[0]).id;
+  const firstOther = () => state.accounts.find((a) => a.id !== $('#xfFrom').value).id;
+  $('#xfTo').value = state.accounts.some((a) => a.id === toId) && toId !== $('#xfFrom').value ? toId : firstOther();
+  function hint() {
+    const to = accountById($('#xfTo').value);
+    const from = accountById($('#xfFrom').value);
+    const toCard = to && to.type === 'credit';
+    $('#xfOwed').classList.toggle('hidden', !toCard);
+    if (toCard) $('#xfOwed').textContent = `You owe ${money(Math.max(0, owed(to.id)))} on ${to.name}.`;
+    $('#xfHint').textContent = toCard
+      ? 'Paying a card bill moves money to the card. It isn\'t counted as spending — the purchases on the card already were.'
+      : from && from.type === 'credit' ? 'Moving money out of a card adds to what you owe on it.'
+        : 'Moving money between your own accounts isn\'t counted as spending or income.';
+  }
+  $('#xfFrom').addEventListener('change', () => { if ($('#xfTo').value === $('#xfFrom').value) $('#xfTo').value = firstOther(); hint(); });
+  $('#xfTo').addEventListener('change', hint);
+  $('#xfSwap').addEventListener('click', () => {
+    const a = $('#xfFrom').value; $('#xfFrom').value = $('#xfTo').value; $('#xfTo').value = a; hint();
+  });
+  hint();
+  $('#xferForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const amount = toCents($('#payAmt').value);
+    const amount = toCents($('#xfAmt').value);
     if (!(amount > 0)) return toast('Enter an amount above 0');
-    const fromId = $('#payFrom').value;
-    const date = $('#payDate').value || today();
+    const from = $('#xfFrom').value, to = $('#xfTo').value;
+    if (from === to) return toast('Pick two different accounts');
+    const date = $('#xfDate').value || today();
+    const note = $('#xfNote').value.trim();
+    const toCard = isCard(to);
+    const label = (side) => {
+      const base = toCard
+        ? (side === 'out' ? `Card payment → ${accountName(to)}` : `Card payment from ${accountName(from)}`)
+        : (side === 'out' ? `Transfer → ${accountName(to)}` : `Transfer from ${accountName(from)}`);
+      return note ? `${base} · ${note}` : base;
+    };
     const tid = pairId || uid();
     state.transactions = state.transactions.filter((t) => t.transferId !== tid);
     state.transactions.push(
-      { id: uid(), transferId: tid, accountId: fromId, type: 'expense', amount, category: 'Transfer', date, note: `Card payment → ${card.name}` },
-      { id: uid(), transferId: tid, accountId: cardId, type: 'income', amount, category: 'Transfer', date, note: `Card payment from ${accountName(fromId)}` });
+      { id: uid(), transferId: tid, accountId: from, type: 'expense', amount, category: 'Transfer', date, note: label('out'), userNote: note },
+      { id: uid(), transferId: tid, accountId: to, type: 'income', amount, category: 'Transfer', date, note: label('in'), userNote: note });
     await save();
     closeSheet(); render();
-    toast('Card payment recorded');
+    toast(toCard ? 'Card payment recorded' : 'Transfer recorded');
   });
-  if (out) $('#payDel').addEventListener('click', async () => {
-    if (!confirm('Delete this card payment (from both accounts)?')) return;
+  if (out) $('#xfDel').addEventListener('click', async () => {
+    if (!confirm('Delete this transfer (from both accounts)?')) return;
     state.transactions = state.transactions.filter((t) => t.transferId !== pairId);
-    await save(); closeSheet(); render(); toast('Payment deleted');
+    await save(); closeSheet(); render(); toast('Transfer deleted');
   });
 }
 
@@ -589,8 +648,8 @@ $('#fab').addEventListener('click', () => {
 function txSheet(id, prefill) {
   const t = state.transactions.find((x) => x.id === id);
   if (t && t.transferId) {
-    const cardTx = state.transactions.find((x) => x.transferId === t.transferId && x.type === 'income');
-    if (cardTx && accountById(cardTx.accountId)) return payCardSheet(cardTx.accountId, t.transferId);
+    const both = state.transactions.filter((x) => x.transferId === t.transferId);
+    if (both.length === 2 && both.every((x) => accountById(x.accountId))) return transferSheet({ pairId: t.transferId });
   }
   const p = t || prefill || {};
   // In the form, 'refund' (Money back) is its own type; it is saved as income with refund: true.
@@ -604,6 +663,7 @@ function txSheet(id, prefill) {
         <button type="button" data-type="income" class="income">Income</button>
         <button type="button" data-type="refund" class="refund">Money back</button>
       </div>
+      ${t ? '' : `<button type="button" class="link-btn" id="txToTransfer">⇄ Moving money between your own accounts? Use Transfer</button>`}
       <p id="txRefundHint" class="muted small hidden" style="margin:-4px 0 0">For refunds, or a friend paying you back for something you paid for. It's added to the account and taken off that category's spending, so the category shows what you spent yourself.</p>
       <label>Amount
         <input id="txAmount" type="number" inputmode="decimal" step="0.01" min="0.01" required placeholder="0.00" value="${p.amount ? (p.amount / 100).toFixed(2) : ''}">
@@ -652,7 +712,11 @@ function txSheet(id, prefill) {
   }
   document.querySelectorAll('#txForm .segmented button').forEach((b) => b.addEventListener('click', () => setType(b.dataset.type)));
   setType(type, p.category);
-  if (!t && !p.amount) setTimeout(() => $('#txAmount').focus(), 250);
+  if (!t && !p.amount) setTimeout(() => { const el = $('#txAmount'); if (el) el.focus(); }, 250);
+  if ($('#txToTransfer')) $('#txToTransfer').addEventListener('click', () => {
+    if (state.accounts.length < 2) return toast('Add a second account to transfer between');
+    transferSheet({ fromId: $('#txAccount').value, amount: toCents($('#txAmount').value) || 0 });
+  });
 
   $('#txForm').addEventListener('submit', async (e) => {
     e.preventDefault();
