@@ -55,20 +55,60 @@ function nthDate(r, i) {
     default: return addMonthsISO(r.start, i);
   }
 }
-// All payment dates between from and to (inclusive, ISO strings).
-function occurrences(r, from, to) {
+/* Loans: a recurring payment with endMode 'loan' runs until a balance is paid off.
+   loanBalance (cents) is what was left to pay on loanAsOf, before the payment on r.start.
+   loanInterest: 'included' (the balance already includes interest, or there is none — e.g. car loans,
+   instalment plans) or 'reducing' (interest of loanRate % a year is charged on what's left — e.g. mortgages). */
+const PER_YEAR = { weekly: 52, fortnightly: 26, monthly: 12, quarterly: 4, yearly: 1 };
+const loanCache = new Map();
+function loanSchedule(r) {
+  const key = [r.loanBalance, r.loanInterest, r.loanRate, r.amount, r.freq].join('|');
+  if (loanCache.has(key)) return loanCache.get(key);
+  const rate = r.loanInterest === 'reducing' ? (r.loanRate || 0) / 100 / (PER_YEAR[r.freq] || 12) : 0;
+  let bal = r.loanBalance || 0, interest = 0, last = r.amount, ok = true;
+  const after = []; // balance left after each payment
+  while (bal > 0 && after.length < 1200) {
+    const int = bal * rate;
+    if (int >= r.amount) { ok = false; break; } // payment doesn't even cover the interest
+    interest += int; bal += int;
+    last = Math.min(r.amount, Math.round(bal));
+    bal = Math.max(0, bal - last);
+    after.push(Math.round(bal));
+  }
+  if (bal > 0) ok = false;
+  const res = { ok, count: after.length, last, interest: Math.round(interest), after };
+  loanCache.set(key, res);
+  return res;
+}
+// Number of payments in total, or null if it has no fixed number.
+function paymentCount(r) {
+  if (r.endMode === 'count') return r.count;
+  if (r.endMode === 'loan') return loanSchedule(r).count;
+  return null;
+}
+// Amount of the i-th payment (a loan's last payment can be smaller).
+function nthAmount(r, i) {
+  if (r.endMode === 'loan') { const s = loanSchedule(r); if (i === s.count - 1) return s.last; }
+  return r.amount;
+}
+// Payments between from and to (inclusive, ISO strings) as {d: date, i: index}.
+function occurrencesIdx(r, from, to) {
   const out = [];
+  const cnt = paymentCount(r);
   for (let i = 0; i < 5000; i++) {
-    if (r.endMode === 'count' && i >= r.count) break;
+    if (cnt != null && i >= cnt) break;
     const d = nthDate(r, i);
     if (d > to) break;
     if (r.endMode === 'date' && r.end && d > r.end) break;
-    if (d >= from) out.push(d);
+    if (d >= from) out.push({ d, i });
   }
   return out;
 }
+const occurrences = (r, from, to) => occurrencesIdx(r, from, to).map((o) => o.d);
+const amountBetween = (r, from, to) => occurrencesIdx(r, from, to).reduce((s, o) => s + nthAmount(r, o.i), 0);
 function lastPaymentDate(r) {
-  if (r.endMode === 'count') return nthDate(r, r.count - 1);
+  const cnt = paymentCount(r);
+  if (cnt != null) return cnt ? nthDate(r, cnt - 1) : null;
   if (r.endMode === 'date' && r.end) {
     const all = occurrences(r, r.start, r.end);
     return all[all.length - 1] || null;
@@ -79,11 +119,21 @@ function recurringSummary(r) {
   const t = today();
   const made = occurrences(r, r.start, t).length;
   const last = lastPaymentDate(r);
-  const total = r.endMode === 'count' ? r.count : (last ? occurrences(r, r.start, last).length : null);
+  const cnt = paymentCount(r);
+  const total = cnt != null ? cnt : (last ? occurrences(r, r.start, last).length : null);
   const left = total == null ? null : Math.max(0, total - made);
   const next = occurrences(r, addDaysISO(t, 1), last || addMonthsISO(t, 13))[0] || null;
-  return { made, total, left, last, next, remainingAmt: left == null ? null : left * r.amount, finished: left === 0 };
+  let remainingAmt = null;
+  if (left != null) { remainingAmt = 0; for (let i = made; i < total; i++) remainingAmt += nthAmount(r, i); }
+  const res = { made, total, left, last, next, remainingAmt, finished: left === 0 };
+  if (r.endMode === 'loan') {
+    const sch = loanSchedule(r);
+    res.outstanding = made ? (sch.after[made - 1] || 0) : r.loanBalance; // still owed on the loan today
+    res.interestLeft = Math.max(0, remainingAmt - res.outstanding);
+  }
+  return res;
 }
+const activeLoans = () => state.recurring.filter((r) => r.endMode === 'loan' && !recurringSummary(r).finished);
 
 let planTab = 'forecast';
 document.querySelectorAll('#planTabs button').forEach((b) => b.addEventListener('click', () => {
@@ -115,7 +165,7 @@ function renderRecurring() {
   const t = today();
   const soon = [];
   for (const r of state.recurring) {
-    for (const d of occurrences(r, t, addDaysISO(t, 30))) soon.push({ r, d });
+    for (const o of occurrencesIdx(r, t, addDaysISO(t, 30))) soon.push({ r, d: o.d, amt: nthAmount(r, o.i) });
   }
   soon.sort((a, b) => a.d.localeCompare(b.d));
 
@@ -129,14 +179,15 @@ function renderRecurring() {
   </div>`;
   if (soon.length) {
     html += `<h2 class="section-title">Due in the next 30 days</h2><div class="card">` +
-      soon.map(({ r, d }) => `<div class="kv"><span class="k">${niceDate(d)} · ${esc(r.name)}</span>
-        <span class="v ${r.type === 'income' ? 'pos' : ''}">${money(r.type === 'income' ? r.amount : -r.amount, true)}</span></div>`).join('') +
+      soon.map(({ r, d, amt }) => `<div class="kv"><span class="k">${niceDate(d)} · ${esc(r.name)}</span>
+        <span class="v ${r.type === 'income' ? 'pos' : ''}">${money(r.type === 'income' ? amt : -amt, true)}</span></div>`).join('') +
       `</div>`;
   }
   const item = (r) => {
     const s = recurringSummary(r);
     const bits = [];
     if (s.finished) bits.push(`finished ${niceDate(s.last)}`);
+    else if (r.endMode === 'loan') bits.push(`${money(s.outstanding)} left · paid off ${monthLabel(monthKey(s.last))}`);
     else if (s.left != null) bits.push(`${s.left} of ${s.total} left · ends ${monthLabel(monthKey(s.last))}`);
     else bits.push(`${FREQS[r.freq].label.toLowerCase()} · ongoing`);
     return `<button class="item" data-recur="${r.id}">
@@ -158,6 +209,8 @@ function recurringSheet(id) {
   const r = state.recurring.find((x) => x.id === id);
   let type = r ? r.type : 'expense';
   let endMode = r ? r.endMode : 'count';
+  // For a loan, the form shows today's figures: what's still owed and the next unpaid payment.
+  const loanNow = r && r.endMode === 'loan' ? recurringSummary(r) : null;
   openSheet(r ? 'Recurring payment' : 'New recurring payment', `
     <form class="form" id="recurForm">
       <div class="segmented">
@@ -173,14 +226,15 @@ function recurringSheet(id) {
       <label>How often
         <select id="rcFreq">${Object.entries(FREQS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('')}</select>
       </label>
-      <label>First payment date
+      <label><span id="rcStartLabel">First payment date</span>
         <input id="rcStart" type="date" required value="${r ? r.start : today()}">
       </label>
       <label>When does it end?
         <select id="rcEndMode">
-          <option value="count">After a number of payments (instalments, loans)</option>
+          <option value="loan">When a loan is paid off</option>
+          <option value="count">After a number of payments</option>
           <option value="date">On a date</option>
-          <option value="never">No end date (subscriptions, rent, salary)</option>
+          <option value="never">Never (subscriptions, rent, salary)</option>
         </select>
       </label>
       <label id="rcCountWrap">Total number of payments
@@ -189,6 +243,22 @@ function recurringSheet(id) {
       <label id="rcEndWrap">Last payment on or before
         <input id="rcEnd" type="date" value="${r && r.end ? r.end : ''}">
       </label>
+      <div id="rcLoanWrap" class="form">
+        <label>Still owed on the loan today
+          <input id="rcLoanBal" type="number" inputmode="decimal" step="0.01" min="0.01" placeholder="from your loan statement or bank app"
+            value="${loanNow ? (loanNow.outstanding / 100).toFixed(2) : ''}">
+        </label>
+        <label>Interest
+          <select id="rcLoanInt">
+            <option value="included">Included in what's owed / none</option>
+            <option value="reducing">Charged on what's left</option>
+          </select>
+        </label>
+        <p class="muted small" style="margin:-6px 0 0">Car loans and instalment plans usually quote what's owed with interest included. Mortgages and most personal loans charge interest on what's left.</p>
+        <label id="rcLoanRateWrap">Interest rate (% a year)
+          <input id="rcLoanRate" type="number" inputmode="decimal" step="0.01" min="0" placeholder="e.g. 3.5" value="${r && r.loanRate ? r.loanRate : ''}">
+        </label>
+      </div>
       ${catPickerHtml('rc')}
       <label>Paid from / into account or card (optional)
         <select id="rcAccount"><option value="">—</option>${accountOptions()}</select>
@@ -202,6 +272,8 @@ function recurringSheet(id) {
         <button type="button" class="btn danger full" id="rcDel">Delete</button>` : ''}
     </form>`);
   $('#rcFreq').value = r ? r.freq : 'monthly';
+  if (loanNow && loanNow.next) $('#rcStart').value = loanNow.next;
+  $('#rcLoanInt').value = r && r.loanInterest ? r.loanInterest : 'included';
   $('#rcEndMode').value = endMode;
   $('#rcAccount').value = r && r.accountId ? r.accountId : '';
 
@@ -210,15 +282,33 @@ function recurringSheet(id) {
       type, name: $('#rcName').value.trim(), amount: toCents($('#rcAmount').value),
       freq: $('#rcFreq').value, start: $('#rcStart').value || today(),
       endMode, count: parseInt($('#rcCount').value, 10) || 0, end: $('#rcEnd').value || '',
-      accountId: $('#rcAccount').value, note: $('#rcNote').value.trim()
+      accountId: $('#rcAccount').value, note: $('#rcNote').value.trim(),
+      loanBalance: toCents($('#rcLoanBal').value), loanAsOf: today(),
+      loanInterest: $('#rcLoanInt').value, loanRate: parseFloat($('#rcLoanRate').value) || 0
     };
   }
   function preview() {
     $('#rcCountWrap').classList.toggle('hidden', endMode !== 'count');
     $('#rcEndWrap').classList.toggle('hidden', endMode !== 'date');
+    $('#rcLoanWrap').classList.toggle('hidden', endMode !== 'loan');
+    $('#rcLoanRateWrap').classList.toggle('hidden', $('#rcLoanInt').value !== 'reducing');
+    $('#rcStartLabel').textContent = endMode === 'loan' ? 'Next payment date' : 'First payment date';
     const f = readForm();
     const box = $('#rcPreview');
     if (!(f.amount > 0)) { box.textContent = 'Fill in the amount to see a summary.'; return; }
+    if (endMode === 'loan') {
+      if (!(f.loanBalance > 0)) { box.textContent = 'Fill in what is still owed on the loan.'; return; }
+      if (f.loanInterest === 'reducing' && !f.loanRate) { box.textContent = 'Fill in the interest rate.'; return; }
+      const sch = loanSchedule(f);
+      if (!sch.ok) { box.innerHTML = '<span class="status bad">⚠️ This payment never pays off the loan — it doesn\'t cover the interest. Check the amount and rate.</span>'; return; }
+      const total = sch.after.length ? (sch.count - 1) * f.amount + sch.last : 0;
+      box.innerHTML = [
+        `Paid off by <strong>${niceDate(nthDate(f, sch.count - 1))}</strong> — <strong>${sch.count}</strong> more payment${sch.count > 1 ? 's' : ''}${sch.last !== f.amount ? ` (the last one ${money(sch.last)})` : ''}.`,
+        `You'll pay <strong>${money(total)}</strong> in total${f.loanInterest === 'reducing' ? `, of which <strong>${money(sch.interest)}</strong> is interest` : ''}.`,
+        `About <strong>${money(monthlyEquivalent(f))}</strong> a month until then.`
+      ].join('<br>');
+      return;
+    }
     if (endMode === 'count' && !(f.count > 0)) { box.textContent = 'Fill in the number of payments.'; return; }
     if (endMode === 'date' && !f.end) { box.textContent = 'Pick the end date.'; return; }
     const s = recurringSummary(f);
@@ -235,7 +325,12 @@ function recurringSheet(id) {
   }
   document.querySelectorAll('#recurForm .segmented button').forEach((b) => b.addEventListener('click', () => setType(b.dataset.type)));
   setType(type, r && r.category);
-  $('#rcEndMode').addEventListener('change', (e) => { endMode = e.target.value; preview(); });
+  $('#rcEndMode').addEventListener('change', (e) => {
+    endMode = e.target.value;
+    if (endMode === 'loan' && type === 'expense' && $('#rcCat').value === 'Instalment') setupCatPicker('rc', type, 'Loan repayment');
+    preview();
+  });
+  $('#rcLoanInt').addEventListener('change', preview);
   $('#recurForm').addEventListener('input', preview);
   preview();
 
@@ -247,10 +342,18 @@ function recurringSheet(id) {
     if (endMode === 'count' && !(f.count > 0)) return toast('Enter the number of payments');
     if (endMode === 'date' && !f.end) return toast('Pick the end date');
     if (endMode === 'date' && f.end < f.start) return toast('The end date is before the first payment');
+    if (endMode === 'loan') {
+      if (!(f.loanBalance > 0)) return toast('Enter what is still owed on the loan');
+      if (f.loanInterest === 'reducing' && !f.loanRate) return toast('Enter the interest rate');
+      if (f.start < today()) return toast('Pick the next payment that is still to come');
+      if (!loanSchedule(f).ok) return toast("The payment doesn't cover the interest — check the amount and rate");
+    }
     f.category = readCatPicker('rc', type);
     if (!f.category) return toast('Type a name for the new category');
     if (endMode !== 'count') f.count = 0;
     if (endMode !== 'date') f.end = '';
+    if (endMode !== 'loan') { delete f.loanBalance; delete f.loanAsOf; delete f.loanInterest; delete f.loanRate; }
+    if (r && endMode !== 'loan') { delete r.loanBalance; delete r.loanAsOf; delete r.loanInterest; delete r.loanRate; }
     if (r) Object.assign(r, f);
     else state.recurring.push({ id: uid(), ...f });
     await save();
@@ -260,7 +363,9 @@ function recurringSheet(id) {
   if (r) {
     $('#rcLog').addEventListener('click', () => {
       if (!state.accounts.length) return toast('Create an account first');
-      txSheet(null, { type: r.type, amount: r.amount, category: r.category, accountId: r.accountId, recurringId: r.id, note: r.name });
+      const s = recurringSummary(r);
+      const nextIdx = Math.min(s.made, (s.total || 1) - 1);
+      txSheet(null, { type: r.type, amount: nthAmount(r, Math.max(0, nextIdx)), category: r.category, accountId: r.accountId, recurringId: r.id, note: r.name });
     });
     $('#rcDel').addEventListener('click', async () => {
       if (!confirm(`Delete “${r.name}”? Transactions you already logged for it are kept.`)) return;
@@ -432,7 +537,7 @@ function forecast() {
     const rec = [];
     for (const r of state.recurring) {
       const count = occurrences(r, p.start, p.end).length;
-      if (count) rec.push({ r, amount: r.amount * count, count });
+      if (count) rec.push({ r, amount: amountBetween(r, p.start, p.end), count });
     }
     const recExp = rec.filter((x) => x.r.type === 'expense').reduce((s, x) => s + x.amount, 0);
     const recInc = rec.filter((x) => x.r.type === 'income').reduce((s, x) => s + x.amount, 0);
@@ -458,7 +563,7 @@ function forecast() {
           if (lo <= hi) sum += rate[k] * (daysBetween(lo, hi) + 1);
         }
         for (const r of state.recurring) {
-          if (r.type === 'expense' && r.accountId === a.id) sum += occurrences(r, from, to).length * r.amount;
+          if (r.type === 'expense' && r.accountId === a.id) sum += amountBetween(r, from, to);
         }
         return sum;
       };

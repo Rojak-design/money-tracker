@@ -213,6 +213,17 @@ function renderAccounts() {
     list.innerHTML = banks.map(row).join('') +
       (cards.length ? `<h2 class="section-title" style="margin:12px 0 2px">Credit cards</h2>` + cards.map(row).join('') : '');
   }
+  // Loans (set up under Plan → Recurring) are listed separately and not included in the total above.
+  const loans = activeLoans();
+  const loanTotal = loans.reduce((s, r) => s + recurringSummary(r).outstanding, 0);
+  $('#loanList').innerHTML = loans.length ? `<h2 class="section-title" style="margin:4px 0 8px">Loans · ${money(loanTotal)} owed</h2><div class="list">` +
+    loans.map((r) => {
+      const s = recurringSummary(r);
+      return `<button class="item" data-loan="${r.id}">
+        <div class="left"><div class="title">🏠 ${esc(r.name)}</div><div class="sub">${s.left} left · paid off ${monthLabel(monthKey(s.last))}</div></div>
+        <div class="amt-col"><div class="amt neg">${money(s.outstanding)}</div><div class="sub">owed</div></div></button>`;
+    }).join('') + `</div><p class="muted small" style="margin-top:-6px">Loans aren't included in the total at the top. Tap one to update it.</p>` : '';
+  $('#loanList').querySelectorAll('[data-loan]').forEach((el) => el.addEventListener('click', () => recurringSheet(el.dataset.loan)));
   const cardOwed = cardAccounts().reduce((s, a) => s + Math.max(0, owed(a.id)), 0);
   const bankTotal = bankAccounts().reduce((s, a) => s + balance(a.id), 0);
   $('#totalLabel').textContent = cardAccounts().length ? 'Net total (bank accounts − card bills)' : 'Total of all accounts';
