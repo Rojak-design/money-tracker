@@ -510,7 +510,17 @@ function forecast() {
   for (let p = nextPeriod(current); periods.length < 12; p = nextPeriod(p)) periods.push(p);
 
   // History: complete periods only (not the current one), back to the first logged transaction.
-  const txs = state.transactions.filter(isDayToDay);
+  const txs = state.transactions.filter((x) => isDayToDay(x) && x.date <= t);
+  // Entries logged ahead with a future date (e.g. PayLater instalments) are planned spending/income:
+  // added to the period they fall in, on top of the estimate. Recurring-linked ones are covered by the recurring item.
+  const planned = state.transactions.filter((x) => x.date > t && !x.transferId && x.category !== 'Transfer' && !x.recurringId);
+  const plannedSum = (from, to, pred = () => true) => planned.filter((x) => x.date >= from && x.date <= to && pred(x))
+    .reduce((acc, x) => {
+      if (x.type === 'expense') acc.exp += x.amount; else if (x.refund) acc.exp -= x.amount; else acc.inc += x.amount;
+      if (isCard(x.accountId)) acc.card += x.type === 'expense' ? x.amount : x.refund ? -x.amount : 0;
+      return acc;
+    }, { exp: 0, inc: 0, card: 0 });
+  const plannedIn = (from, to) => planned.filter((x) => x.date >= from && x.date <= to).sort((a, b) => a.date.localeCompare(b.date));
   const first = txs.length ? txs.map((x) => x.date).sort()[0] : null;
   let hist = [];
   let partial = false;
@@ -582,9 +592,12 @@ function forecast() {
     const cats = catProj.map((c) => ({ cat: c.cat, amount: Math.round(c.at(j) * p.days) }));
     const dayExp = cats.reduce((s, c) => s + c.amount, 0);
     const income = recInc + Math.round(incAvg);
+    const pl = plannedSum(p.start, p.end);
     const cardSpend = rec.filter((x) => x.r.type === 'expense' && isCard(x.r.accountId)).reduce((s, x) => s + x.amount, 0) +
-      Math.round(catProj.reduce((s, c, ci) => s + cats[ci].amount * Object.values(c.share).reduce((a, b) => a + b, 0), 0));
-    return { ...p, rec, recExp, recInc, cats, dayExp, income, spend: recExp + dayExp, net: income - recExp - dayExp, cardSpend, bills: [] };
+      Math.round(catProj.reduce((s, c, ci) => s + cats[ci].amount * Object.values(c.share).reduce((a, b) => a + b, 0), 0)) + pl.card;
+    const spend = recExp + dayExp + pl.exp;
+    return { ...p, rec, recExp, recInc, cats, dayExp, plannedList: plannedIn(p.start, p.end), plannedExp: pl.exp,
+      income: income + pl.inc, spend, net: income + pl.inc - spend, cardSpend, bills: [] };
   });
 
   // Card bills: each statement's spending (actual up to today, projected after), due on the card's due date.
@@ -613,7 +626,8 @@ function forecast() {
         const i = rowIdx(w.due);
         const inNow = w.due >= current.start && w.due <= current.end;
         if (i < 0 && !inNow) continue;
-        const actual = cardSpendBetween(a.id, w.from, [w.to, t].sort()[0]);
+        const actual = cardSpendBetween(a.id, w.from, [w.to, t].sort()[0]) +
+          (w.to > t ? plannedSum([w.from, addDaysISO(t, 1)].sort()[1], w.to, (x) => x.accountId === a.id).card : 0);
         const proj = w.to > t ? projected([w.from, addDaysISO(t, 1)].sort()[1], w.to) : 0;
         const amount = Math.max(0, Math.round(actual + proj));
         if (!amount) continue;
@@ -658,14 +672,19 @@ function forecast() {
   // Other income: the period's pay may already be logged; otherwise expect the usual amount.
   const otherIncNow = logged.filter((x) => x.type === 'income' && !x.refund && !x.recurringId).reduce((s, x) => s + x.amount, 0);
   restIn += Math.max(0, incAvg - otherIncNow);
+  const plNow = plannedSum(tomorrow, current.end);
+  restIn += plNow.inc;
+  restOut += plNow.exp - plNow.card; // planned card spending leaves the bank when the bill is due
   const nowRecExp = recNow.filter((x) => x.r.type === 'expense').reduce((s, x) => s + x.amount, 0);
   const nowRecInc = recNow.filter((x) => x.r.type === 'income').reduce((s, x) => s + x.amount, 0);
   const nowDay = nowCats.reduce((s, c) => s + c.amount, 0);
   const nowIncome = nowRecInc + Math.max(otherIncNow, Math.round(incAvg));
-  const nowCardSpend = Math.round(cards.reduce((s, a) => s + cardSpendBetween(a.id, current.start, t), 0) + cardShareRest + cardRest);
+  const nowCardSpend = Math.round(cards.reduce((s, a) => s + cardSpendBetween(a.id, current.start, t), 0) + cardShareRest + cardRest) + plNow.card;
+  const nowSpend = nowRecExp + nowDay + plNow.exp;
   const nowRow = {
     ...current, current: true, short: 'Now', rec: recNow, recExp: nowRecExp, recInc: nowRecInc, cats: nowCats,
-    dayExp: nowDay, income: nowIncome, spend: nowRecExp + nowDay, net: nowIncome - nowRecExp - nowDay,
+    plannedList: plannedIn(tomorrow, current.end), plannedExp: plNow.exp,
+    dayExp: nowDay, income: nowIncome + plNow.inc, spend: nowSpend, net: nowIncome + plNow.inc - nowSpend,
     cardSpend: nowCardSpend, bills: nowBills.sort((a, b) => a.due.localeCompare(b.due))
   };
   nowRow.cardBill = nowRow.bills.reduce((s, b) => s + b.amount, 0);
@@ -772,7 +791,7 @@ function renderForecast() {
     const avgCard = f.future.reduce((s, r) => s + r.cardSpend, 0) / 12;
     html += `<p class="muted small">💳 About ${money(avgCard)} a ${word} of your spending goes on credit cards. It leaves your bank account when each card's bill is due, after its statement closes. Tap a bar to see which bills are due in it.</p>`;
   }
-  html += `<p class="muted small">${basis} Card payments, transfers, and transactions linked to a recurring payment, are left out of day-to-day spending so nothing is counted twice — when you log an instalment or loan payment, link it to its recurring payment.</p>`;
+  html += `<p class="muted small">How each ${word} is worked out: 🔁 recurring payments on their dates; "(estimate)" lines are your day-to-day spending per category, from what you've logged so far (a daily rate × the days in the ${word}); 📅 lines are entries you've logged with a future date. ${basis} Card payments, transfers, and transactions linked to a recurring payment, are left out of the estimate so nothing is counted twice.</p>`;
 
   el.innerHTML = html;
   bindForecastControls(f);
@@ -784,7 +803,9 @@ function renderForecast() {
     $('#fcMonth').innerHTML = `<h2>${esc(r.label)}${r.current ? ' <span class="tag">now</span>' : ''}</h2>` +
       (r.current ? `<p class="muted small" style="margin:0 0 6px">Logged so far, plus an estimate for the ${daysBetween(today(), r.end)} day(s) left.</p>` : '') +
       r.rec.filter((x) => x.r.type === 'expense').map((x) => line(`🔁 ${esc(x.r.name)}${x.count > 1 ? ` ×${x.count}` : ''}${isCard(x.r.accountId) ? ' 💳' : ''}`, money(x.amount))).join('') +
-      r.cats.filter((c) => c.amount > 0).map((c) => line(esc(c.cat), money(c.amount))).join('') +
+      r.cats.filter((c) => c.amount > 0).map((c) => line(`${esc(c.cat)} <span class="muted small">(estimate)</span>`, money(c.amount))).join('') +
+      (r.plannedList || []).filter((x) => x.type === 'expense' || x.refund).map((x) => line(`📅 ${esc(x.category)}${x.note ? ' · ' + esc(x.note) : ''} <span class="muted small">(${shortDate(x.date)}${isCard(x.accountId) ? ', 💳' : ''})</span>`,
+        money(x.refund ? -x.amount : x.amount))).join('') +
       line('Total spending', money(r.spend), 'total') +
       line('Expected income', money(r.income)) +
       line('Left over', `<span class="${r.net < 0 ? 'neg' : 'pos'}">${money(r.net, true)}</span>`, 'total') +
