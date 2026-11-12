@@ -501,7 +501,7 @@ function cardSpendBetween(id, from, to) {
 
 /* ---------- Forecast ---------- */
 // Day-to-day (non-recurring) history: everything except transfers and transactions linked to a recurring payment.
-const isDayToDay = (t) => !t.recurringId && !t.transferId && t.category !== 'Transfer' && !t.tripId;
+const isDayToDay = (t) => !t.recurringId && !t.transferId && t.category !== 'Transfer' && !t.tripId && !t.projectId;
 
 function forecast() {
   const lookback = state.settings.fcLookback || 6;
@@ -940,6 +940,20 @@ function niceMax(v) {
 
 /* ---------- Savings projects ---------- */
 const projectTarget = (p) => p.items.reduce((s, i) => s + i.amount, 0);
+// Purchases linked to a project cost: how much was paid and in how many payments.
+function itemPaid(p, i) {
+  const txs = state.transactions.filter((t) => t.projectId === p.id && t.projectItemId === i.id && (t.type === 'expense' || t.refund));
+  return { txs, paid: txs.reduce((s, t) => s + (t.refund ? -t.amount : t.amount), 0), count: txs.filter((t) => t.type === 'expense').length };
+}
+// Still to pay for a cost: nothing once marked fully paid, otherwise the plan minus what's been paid.
+const itemLeft = (p, i) => (i.done ? 0 : Math.max(0, (i.amount || 0) - itemPaid(p, i).paid));
+function projectTag(t) {
+  if (!t.projectId) return '';
+  const p = state.projects.find((x) => x.id === t.projectId);
+  if (!p) return '';
+  const i = p.items.find((x) => x.id === t.projectItemId);
+  return `🎯 ${esc(p.name)}${i ? ' · ' + esc(i.name) : ''} · `;
+}
 const projectSaved = (p) => (p.savedMode === 'account' && state.accounts.some((a) => a.id === p.accountId)
   ? Math.max(0, balance(p.accountId)) : p.saved || 0);
 
@@ -960,13 +974,17 @@ function projectSchedule(p) {
   const pays = [];
   let undated = 0;
   for (const i of p.items) {
-    if (!(i.amount > 0)) continue;
+    // Only what's still to pay: purchases already linked to this cost come off it.
+    const left = p.id ? itemLeft(p, i) : (i.amount || 0);
+    if (!(left > 0)) continue;
     const due = i.due || (p.targetDate ? monthKey(p.targetDate) : '');
-    if (!due) { undated += i.amount; continue; }
+    if (!due) { undated += left; continue; }
     const n = itemPayments(i);
-    const each = Math.floor(i.amount / n);
-    for (let k = 0; k < n; k++) {
-      pays.push({ month: addMonthsKey(due, k), amount: k === n - 1 ? i.amount - each * (n - 1) : each, item: i, k, n });
+    const done = p.id && n > 1 ? Math.min(n - 1, itemPaid(p, i).count) : 0; // instalments already paid
+    const rest = n - done;
+    const each = Math.floor(left / rest);
+    for (let k = done; k < n; k++) {
+      pays.push({ month: addMonthsKey(due, k), amount: k === n - 1 ? left - each * (rest - 1) : each, item: i, k, n });
     }
   }
   pays.sort((a, b) => a.month.localeCompare(b.month));
@@ -1028,9 +1046,13 @@ function planSummary(plan) {
 function projectPlan(p) {
   const target = projectTarget(p);
   const saved = projectSaved(p);
-  const remaining = Math.max(0, target - saved);
+  // What's been paid for the project's costs, and what's still to pay.
+  const spent = p.id ? p.items.reduce((s, i) => s + itemPaid(p, i).paid, 0) : 0;
+  const stillToPay = p.items.reduce((s, i) => s + (p.id ? itemLeft(p, i) : i.amount || 0), 0);
+  const remaining = Math.max(0, stillToPay - saved);
   const thisMonth = monthKey(today());
-  const res = { target, saved, remaining, pct: target ? Math.min(1, saved / target) : 0 };
+  const res = { target, saved, spent, stillToPay, remaining,
+    pct: spent + stillToPay ? Math.min(1, (spent + Math.min(saved, stillToPay)) / (spent + stillToPay)) : 1 };
   if (remaining === 0) res.done = true;
   if (p.monthly > 0 && remaining > 0) {
     res.months = Math.ceil(remaining / p.monthly);
@@ -1128,7 +1150,9 @@ function projectDetail(id) {
   const otherMonthly = state.projects.filter((x) => x.id !== p.id).map((x) => projectPlan(x)).filter((x) => !x.done).reduce((s, x) => s + x.monthlyNow, 0);
   const line = (k, v, cls = '') => `<div class="kv ${cls}"><span class="k">${k}</span><span class="v">${v}</span></div>`;
   let timeline = '';
-  if (r.done) timeline = `<p class="status good">🎉 You have saved enough for this project.</p>`;
+  if (r.done) timeline = r.stillToPay === 0 && r.spent
+    ? `<p class="status good">🎉 Everything for this project is paid — ${money(r.spent)} in total${r.spent !== r.target ? ` (${money(Math.abs(r.target - r.spent))} ${r.spent < r.target ? 'under' : 'over'} the plan)` : ''}.</p>`
+    : `<p class="status good">🎉 You have saved enough for this project.</p>`;
   else if (r.hasSchedule) {
     // Costs with dates and/or instalments: check every payment can be made on time.
     timeline += r.shortNow
@@ -1178,20 +1202,22 @@ function projectDetail(id) {
   openSheet(p.name, `
     <div class="form">
       <div class="card-inset">
-        ${line('Total cost', money(r.target), 'total')}
+        ${line('Total planned', money(r.target), 'total')}
+        ${r.spent ? line('Paid so far', money(r.spent)) + line('Still to pay', money(r.stillToPay)) : ''}
         ${line(p.savedMode === 'account' ? `Saved (balance of ${esc(accountName(p.accountId))})` : 'Saved so far', money(r.saved))}
         ${line('Still to save', money(r.remaining), 'total')}
         <div class="progress"><div style="width:${r.pct * 100}%"></div></div>
       </div>
       ${timeline}
       <div class="card-inset">
-        <strong>Expected costs</strong>
-        ${p.items.map((i) => line(`${esc(i.name)}<br><span class="muted small">${costText(i, p)}</span>`, money(i.amount))).join('') || '<p class="muted small">No costs listed.</p>'}
+        <strong>Costs</strong>
+        ${p.items.map((i) => costBlock(p, i)).join('') || '<p class="muted small">No costs listed.</p>'}
       </div>
       <button class="btn full" id="pjEdit">Edit project</button>
       <button class="btn danger full" id="pjDel">Delete project</button>
     </div>`);
   $('#pjEdit').addEventListener('click', () => projectSheet(p.id));
+  bindCostBlocks(p);
   $('#pjDel').addEventListener('click', async () => {
     if (!confirm(`Delete the project “${p.name}”?`)) return;
     state.projects = state.projects.filter((x) => x.id !== p.id);
@@ -1334,6 +1360,7 @@ function projectSheet(id) {
     const name = $('#pjName').value.trim();
     if (!name) return toast('Give the project a name');
     const clean = items.filter((i) => i.name.trim() || i.amount > 0).map((i) => ({
+      id: i.id || uid(), options: i.options || [], done: !!i.done,
       name: i.name.trim() || 'Cost', amount: i.amount || 0, due: i.due || '', instalments: i.instalments > 1 ? i.instalments : 0 }));
     if (!clean.some((i) => i.amount > 0)) return toast('Add at least one cost with an amount');
     const badInst = items.find((i) => i.instalments === 1 && (i.name.trim() || i.amount > 0)); // instalments picked, count < 2
@@ -1597,5 +1624,108 @@ function tripSheet(id) {
     await save(); render();
     tripDetail(tid);
     toast('Trip saved');
+  });
+}
+
+/* ---------- Project costs: what's been paid, and options (vendors / brands / links) ---------- */
+// Only http(s) links are kept; "example.com/x" becomes "https://example.com/x".
+function cleanUrl(u) {
+  u = (u || '').trim();
+  if (!u) return '';
+  if (!/^[a-z]+:\/\//i.test(u)) u = 'https://' + u;
+  try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.href : ''; } catch { return ''; }
+}
+const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+
+function costBlock(p, i) {
+  const pd = itemPaid(p, i);
+  const n = itemPayments(i);
+  const left = itemLeft(p, i);
+  const status = i.done ? `<span class="status good">✅ Paid${pd.paid ? ` ${money(pd.paid)}` : ''}${pd.paid && pd.paid !== i.amount
+      ? ` — ${money(Math.abs(i.amount - pd.paid))} ${pd.paid < i.amount ? 'under' : 'over'} plan` : ''}</span>`
+    : pd.paid ? `Paid ${money(pd.paid)}${n > 1 ? ` (${Math.min(pd.count, n)} of ${n})` : ''} · ${money(left)} to go${pd.paid > i.amount ? ` · <span class="status bad">${money(pd.paid - i.amount)} over plan</span>` : ''}`
+      : 'Not paid yet';
+  const opts = i.options || [];
+  return `<div class="cost-block">
+    <div class="kv"><span class="k"><strong>${esc(i.name)}</strong><br><span class="muted small">${costText(i, p)}</span></span><span class="v">${money(i.amount)}</span></div>
+    <div class="small" style="margin:2px 0 6px">${status}</div>
+    ${opts.length ? `<div class="opts">${opts.map((o, k) => `<div class="opt">
+        <button type="button" class="opt-main" data-opt="${i.id}:${k}"><strong>${esc(o.vendor || hostOf(o.url) || 'Option')}</strong>${o.price ? ` · ${money(o.price)}` : ''}
+          ${o.note ? `<br><span class="muted small">${esc(o.note)}</span>` : ''}</button>
+        ${o.url ? `<a class="open-link" href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">Open ↗</a>` : ''}
+      </div>`).join('')}</div>` : ''}
+    <div class="cost-actions">
+      <button type="button" class="mini-btn" data-addopt="${i.id}">+ Option / link</button>
+      ${i.done ? `<button type="button" class="mini-btn" data-undone="${i.id}">Not fully paid</button>`
+        : `<button type="button" class="mini-btn" data-pay="${i.id}">Log a payment</button>
+           ${pd.paid ? `<button type="button" class="mini-btn" data-done="${i.id}">Mark fully paid</button>` : ''}`}
+    </div>
+    ${pd.txs.length ? `<div class="muted small">${pd.txs.sort((a, b) => a.date.localeCompare(b.date)).map((t) => `<button type="button" class="link-btn small" data-ptx="${t.id}">${shortDate(t.date)} ${money(t.refund ? -t.amount : t.amount)}</button>`).join(' · ')}</div>` : ''}
+  </div>`;
+}
+
+function bindCostBlocks(p) {
+  const item = (id) => p.items.find((i) => i.id === id);
+  const redraw = async () => { await save(); render(); projectDetail(p.id); };
+  document.querySelectorAll('[data-addopt]').forEach((b) => b.addEventListener('click', () => optionSheet(p, item(b.dataset.addopt))));
+  document.querySelectorAll('[data-opt]').forEach((b) => b.addEventListener('click', () => {
+    const [iid, k] = b.dataset.opt.split(':'); optionSheet(p, item(iid), +k);
+  }));
+  document.querySelectorAll('[data-pay]').forEach((b) => b.addEventListener('click', () => {
+    if (!state.accounts.length) return toast('Create an account first');
+    const i = item(b.dataset.pay);
+    const n = itemPayments(i), pd = itemPaid(p, i);
+    const amount = n > 1 ? Math.round(itemLeft(p, i) / Math.max(1, n - pd.count)) : itemLeft(p, i);
+    txSheet(null, { type: 'expense', amount, projectId: p.id, projectItemId: i.id, note: `${p.name}: ${i.name}`, category: 'Shopping' });
+  }));
+  document.querySelectorAll('[data-done]').forEach((b) => b.addEventListener('click', async () => { item(b.dataset.done).done = true; await redraw(); }));
+  document.querySelectorAll('[data-undone]').forEach((b) => b.addEventListener('click', async () => { item(b.dataset.undone).done = false; await redraw(); }));
+  document.querySelectorAll('[data-ptx]').forEach((b) => b.addEventListener('click', () => txSheet(b.dataset.ptx)));
+}
+
+// Add or edit an option for a cost: vendor / brand, link, price, note.
+function optionSheet(p, i, k) {
+  const o = k != null ? i.options[k] : null;
+  openSheet(o ? 'Option' : `Option for ${i.name}`, `
+    <form class="form" id="optForm">
+      <label>Vendor / brand
+        <input id="opVendor" maxlength="60" placeholder="e.g. IKEA, Castlery" value="${esc(o ? o.vendor : '')}">
+      </label>
+      <label>Link to the product (optional)
+        <input id="opUrl" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Paste the link, e.g. castlery.com/…" value="${esc(o ? o.url : '')}">
+      </label>
+      <label>Price (optional)
+        <input id="opPrice" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" value="${o && o.price ? (o.price / 100).toFixed(2) : ''}">
+      </label>
+      <label>Note (optional)
+        <input id="opNote" maxlength="100" placeholder="e.g. 3-seater, grey, 12-month instalments" value="${esc(o ? o.note || '' : '')}">
+      </label>
+      <button class="btn full" type="submit">Save</button>
+      ${o && o.url ? `<a class="btn secondary full" href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">Open the link ↗</a>` : ''}
+      ${o && o.price ? `<button type="button" class="btn secondary full" id="opUse">Use this price for ${esc(i.name)} (${money(o.price)})</button>` : ''}
+      ${o ? '<button type="button" class="btn danger full" id="opDel">Delete option</button>' : ''}
+      <button type="button" class="btn secondary full" id="opBack">Back to ${esc(p.name)}</button>
+    </form>`);
+  const back = () => projectDetail(p.id);
+  $('#opBack').addEventListener('click', back);
+  $('#optForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const rawUrl = $('#opUrl').value.trim();
+    const url = cleanUrl(rawUrl);
+    if (rawUrl && !url) return toast('That link doesn\'t look right — it should start with https://');
+    const vendor = $('#opVendor').value.trim();
+    if (!vendor && !url) return toast('Add a vendor / brand or a link');
+    const price = toCents($('#opPrice').value || '0');
+    const data = { vendor, url, price: isNaN(price) ? 0 : price, note: $('#opNote').value.trim() };
+    if (!Array.isArray(i.options)) i.options = [];
+    if (o) Object.assign(o, data); else i.options.push(data);
+    await save(); render(); back(); toast('Option saved');
+  });
+  if (o && $('#opUse')) $('#opUse').addEventListener('click', async () => {
+    i.amount = o.price; await save(); render(); back(); toast(`${i.name} now planned at ${money(o.price)}`);
+  });
+  if (o) $('#opDel').addEventListener('click', async () => {
+    if (!confirm('Delete this option?')) return;
+    i.options.splice(k, 1); await save(); render(); back();
   });
 }

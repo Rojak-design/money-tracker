@@ -71,6 +71,8 @@ function migrate() {
   if (!Array.isArray(state.recurring)) state.recurring = [];
   if (!Array.isArray(state.projects)) state.projects = [];
   if (!Array.isArray(state.trips)) state.trips = [];
+  // Project costs get ids (so purchases can be linked to them) and a list of options (vendors / links).
+  for (const p of state.projects) for (const i of p.items || []) { if (!i.id) i.id = uid(); if (!Array.isArray(i.options)) i.options = []; }
   if (!state.categories) {
     state.categories = {};
     for (const type of ['expense', 'income']) {
@@ -304,7 +306,7 @@ function renderTx() {
     }
     html += `<button class="item" data-tx="${t.id}">
       <div class="left"><div class="title">${esc(title)}${refundTag}</div>
-      ${sub ? `<div class="sub">${t.recurringId ? '🔁 ' : ''}${tripTag(t)}${sub}</div>` : t.recurringId ? '<div class="sub">🔁 Recurring</div>' : tripTag(t) ? `<div class="sub">${tripTag(t)}</div>` : ''}</div>
+      ${sub ? `<div class="sub">${t.recurringId ? '🔁 ' : ''}${tripTag(t)}${projectTag(t)}${sub}</div>` : t.recurringId ? '<div class="sub">🔁 Recurring</div>' : tripTag(t) ? `<div class="sub">${tripTag(t)}</div>` : ''}</div>
       <div class="amt ${signed < 0 ? 'neg' : 'pos'}">${money(signed, true)}</div></button>`;
   }
   list.innerHTML = html;
@@ -698,6 +700,9 @@ function txSheet(id, prefill) {
       <label>Date
         <input id="txDate" type="date" required value="${p.date || today()}">
       </label>
+      <label id="txProjWrap" class="hidden">For a savings project (optional)
+        <select id="txProj"></select>
+      </label>
       <label id="txTripWrap" class="hidden">Trip (optional)
         <select id="txTrip"></select>
       </label>
@@ -729,6 +734,17 @@ function txSheet(id, prefill) {
     }
   }
   tripSel.addEventListener('change', () => { tripTouched = true; $('#txTripHint').classList.add('hidden'); });
+
+  // Savings project: a purchase can be linked to one of a project's costs, so the project shows what was actually paid.
+  const projSel = $('#txProj');
+  function fillProjects() {
+    const projs = state.projects.filter((x) => (x.items || []).length);
+    $('#txProjWrap').classList.toggle('hidden', !projs.length || type === 'income');
+    const cur = projSel.value || (p.projectId ? `${p.projectId}:${p.projectItemId || ''}` : '');
+    projSel.innerHTML = `<option value="">Not for a project</option>` + projs.map((x) => `<optgroup label="🎯 ${esc(x.name)}">` +
+      x.items.map((i) => `<option value="${x.id}:${i.id}">${esc(x.name)} · ${esc(i.name)}</option>`).join('') + '</optgroup>').join('');
+    projSel.value = [...projSel.options].some((o) => o.value === cur) ? cur : '';
+  }
   $('#txDate').addEventListener('input', fillTrips);
 
   const recSel = $('#txRec');
@@ -753,6 +769,7 @@ function txSheet(id, prefill) {
     setupCatPicker('tx', catType(), keepCat || (type !== 'income' && cur && cur !== '__new' && categoriesFor('expense').includes(cur) ? cur : undefined));
     $('#txRefundHint').classList.toggle('hidden', type !== 'refund');
     fillTrips();
+    fillProjects();
     $('#txNote').placeholder = type === 'refund' ? 'e.g. Joyce paid me back for Chagee' : 'e.g. Lunch with Sam';
     fillRecurring(p.recurringId);
   }
@@ -776,8 +793,17 @@ function txSheet(id, prefill) {
       date: $('#txDate').value || today(),
       note: $('#txNote').value.trim(),
       recurringId: recSel.value || undefined,
-      tripId: (type !== 'income' && tripSel.value) || undefined
+      tripId: (type !== 'income' && tripSel.value) || undefined,
+      projectId: (type !== 'income' && projSel.value && projSel.value.split(':')[0]) || undefined,
+      projectItemId: (type !== 'income' && projSel.value && projSel.value.split(':')[1]) || undefined
     };
+    // A purchase paid from money set aside for a project: offer to take it off the project's typed-in savings.
+    const proj = data.projectId && state.projects.find((x) => x.id === data.projectId);
+    const newlyLinked = data.projectId && (!t || t.projectId !== data.projectId || t.amount !== amount);
+    if (proj && newlyLinked && type === 'expense' && proj.savedMode !== 'account' && proj.saved > 0
+      && confirm(`Was this paid from the money saved for “${proj.name}”? Tap OK to take ${money(Math.min(amount, proj.saved))} off its saved amount.`)) {
+      proj.saved = Math.max(0, proj.saved - amount);
+    }
     if (t) Object.assign(t, data);
     else state.transactions.push({ id: uid(), ...data });
     await save();
