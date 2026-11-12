@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-title" content="Money">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <!-- When app files change, bump ?v= here and the version in sw.js so phones load matching files. -->
-  <link rel="stylesheet" href="style.css?v=15">
+  <link rel="stylesheet" href="style.css?v=16">
 </head>
 <body>
   <header class="topbar">
@@ -58,10 +58,11 @@
         <label>Date
           <input type="date" id="reconDate" required>
         </label>
-        <label>Bank screenshot (optional)
+        <label>Bank screenshot (optional — the balance is read from it for you)
           <input type="file" id="reconImage" accept="image/*">
         </label>
         <img id="reconPreview" class="preview hidden" alt="Screenshot preview">
+        <div id="reconOcr" class="ocr-box small hidden" aria-live="polite"></div>
         <label><span id="reconBankLabel">Balance shown in your bank</span>
           <input type="number" id="reconBank" inputmode="decimal" step="0.01" placeholder="0.00" required>
         </label>
@@ -148,7 +149,7 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="app.js?v=15"></script>
-  <script src="plan.js?v=15"></script>
+  <script src="app.js?v=16"></script>
+  <script src="plan.js?v=16"></script>
 </body>
 </html>
