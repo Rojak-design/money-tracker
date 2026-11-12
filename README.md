@@ -29,6 +29,6 @@ On iPhone, the home-screen app and Safari keep separate data — use the home-sc
 - `index.html` – the page
 - `style.css` – the look
 - `app.js` – everything the app does
-- `manifest.json`, `sw.js`, `icons/` – make it installable and work offline
+- `manifest.json`, `sw.js`, `icon*.png`, `icon.svg` – make it installable and work offline
 
 When you change any file, bump the version in `sw.js` (`money-tracker-v1` → `v2`) so phones pick up the update.
