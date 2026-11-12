@@ -320,3 +320,9 @@ label.check input { width: 22px; height: 22px; flex: none; }
 /* Plan: four tabs */
 .segmented.four { grid-template-columns: repeat(4, 1fr); }
 .segmented.four button { font-size: 14px; padding: 10px 2px; }
+
+/* Project saving plan table */
+.grid4 { display: grid; grid-template-columns: 1fr auto auto auto; gap: 4px 10px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.grid4:last-child { border-bottom: 0; }
+.grid4 > span:not(:first-child) { text-align: right; font-weight: 600; white-space: nowrap; }
+.grid4.head { color: var(--muted); font-size: 12px; font-weight: 600; }

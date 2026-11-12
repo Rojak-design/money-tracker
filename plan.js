@@ -848,7 +848,7 @@ function renderSavings(el, f, html, basis, cycleNote) {
   const total = f.future.reduce((s, r) => s + r.net, 0);
   const avg = total / 12;
   const last = rows[rows.length - 1];
-  const committed = state.projects.filter((p) => !projectPlan(p).done).reduce((s, p) => s + (p.monthly || 0), 0);
+  const committed = state.projects.map((p) => projectPlan(p)).filter((r) => !r.done).reduce((s, r) => s + r.monthlyNow, 0);
   const hasIncome = f.incAvg > 0 || state.recurring.some((r) => r.type === 'income' && !recurringSummary(r).finished);
 
   html += `
@@ -973,6 +973,58 @@ function projectSchedule(p) {
   return { pays, undated };
 }
 
+/* How much to save each month for a project (p.planMode):
+   'due'    – save each payment in the month it's due (instalments month by month), after using what's saved;
+   'spread' – the smoothest plan: the lowest steady amount that meets every payment on time, dropping after each
+              big payment (e.g. S$1,833.34 a month until a S$5,000 bill, then S$500 a month for instalments);
+   'fixed'  – a fixed amount you choose (p.monthly).
+   Returns [{month, save, pay}] from this month to the last payment, or null if there are no dated costs. */
+const planModeOf = (p) => p.planMode || (p.monthly > 0 ? 'fixed' : 'due');
+function autoSavingPlan(p, saved, timeline) {
+  if (!timeline || !timeline.length) return null;
+  const first = monthKey(today());
+  const last = timeline[timeline.length - 1].month;
+  const months = [];
+  for (let m = first; m <= last; m = addMonthsKey(m, 1)) months.push({ month: m, pay: 0, save: 0 });
+  // Payments already overdue count as due this month.
+  for (const t of timeline) months[Math.max(0, monthsBetween(first, t.month))].pay += t.pay;
+  if (planModeOf(p) === 'spread') {
+    const cum = []; months.reduce((acc, m, i) => (cum[i] = acc + m.pay), 0);
+    let start = 0, have = saved;
+    while (start < months.length) {
+      let best = -Infinity, bestJ = start;
+      for (let j = start; j < months.length; j++) {
+        const rate = (cum[j] - have) / (j - start + 1);
+        if (rate >= best - 1e-9) { best = rate; bestJ = j; }
+      }
+      const rate = Math.max(0, Math.ceil(best));
+      for (let k = start; k <= bestJ; k++) months[k].save = rate;
+      have += rate * (bestJ - start + 1);
+      start = bestJ + 1;
+    }
+  } else {
+    let covered = saved;
+    for (const m of months) { const use = Math.min(covered, m.pay); covered -= use; m.save = m.pay - use; }
+  }
+  return months;
+}
+// The amount to save in a given month (default: this month).
+function projectMonthly(p, r, month = monthKey(today())) {
+  if (planModeOf(p) === 'fixed') return p.monthly || 0;
+  const row = r && r.plan && r.plan.find((m) => m.month === month);
+  return row ? row.save : 0;
+}
+// "S$1,833.34 a month Nov 2026 – Jan 2027, then S$500.00 a month Feb – Dec 2027"
+function planSummary(plan) {
+  const parts = [];
+  for (const m of plan) {
+    const last = parts[parts.length - 1];
+    if (last && last.save === m.save) last.to = m.month; else parts.push({ save: m.save, from: m.month, to: m.month });
+  }
+  const range = (x) => (x.from === x.to ? `in ${monthLabel(x.from)}` : `a month, ${monthLabel(x.from)} – ${monthLabel(x.to)}`);
+  return parts.map((x) => (x.save ? `<strong>${money(x.save)}</strong> ${range(x)}` : `nothing ${x.from === x.to ? 'in ' + monthLabel(x.from) : `${monthLabel(x.from)} – ${monthLabel(x.to)}`}`)).join(', then ');
+}
+
 function projectPlan(p) {
   const target = projectTarget(p);
   const saved = projectSaved(p);
@@ -1004,12 +1056,24 @@ function projectPlan(p) {
       if (m.left < 0 && !res.shortfall) res.shortfall = m;
     }
     res.timeline = months;
+    if (planModeOf(p) !== 'fixed') {
+      // Auto plan: savings left after each payment month follows the plan, so it never goes short.
+      res.plan = autoSavingPlan(p, saved, months);
+      let have = saved, paid = 0;
+      for (const pm of res.plan) {
+        have += pm.save; paid += pm.pay;
+        const tm = months.find((m) => m.month === pm.month || (m.month < monthKey(today()) && pm.month === monthKey(today())));
+        if (tm) tm.left = have - paid;
+      }
+      delete res.shortfall;
+    }
     res.neededMonthly = Math.max(0, need);
     res.shortNow = shortNow;
     res.lastPayment = months[months.length - 1].month;
     res.nextPayment = months.find((m) => m.month >= thisMonth) || null;
     res.onTrack = !res.shortfall;
   }
+  res.monthlyNow = projectMonthly(p, res);
   return res;
 }
 
@@ -1019,10 +1083,10 @@ function renderProjects() {
     el.innerHTML = `<div class="empty">No savings projects yet.<br>Tap + to plan for a house, wedding, car, holiday…<br>List what it will cost and see how long it takes to save up.</div>`;
     return;
   }
-  const committed = state.projects.filter((p) => !projectPlan(p).done).reduce((s, p) => s + (p.monthly || 0), 0);
+  const committed = state.projects.map((p) => projectPlan(p)).filter((r) => !r.done).reduce((s, r) => s + r.monthlyNow, 0);
   const spare = forecastSpare();
   let html = `<div class="tiles">
-    <div class="tile"><div class="label">Saving for projects</div><div class="value">${money(committed)}</div><div class="label">per month in total</div></div>
+    <div class="tile"><div class="label">Saving for projects</div><div class="value">${money(committed)}</div><div class="label">this month in total</div></div>
     <div class="tile"><div class="label">Forecast left over</div><div class="value ${spare < 0 ? 'neg' : ''}">${spare == null ? '–' : money(spare)}</div><div class="label">per month on average</div></div>
   </div>`;
   if (spare != null && committed > spare) {
@@ -1034,7 +1098,10 @@ function renderProjects() {
     if (r.done) sub = '🎉 Fully saved';
     else if (r.hasSchedule) {
       sub = r.nextPayment ? `Next: ${money(r.nextPayment.pay)} in ${monthLabel(r.nextPayment.month)}` : `Payments ended ${monthLabel(r.lastPayment)}`;
-      sub += !p.monthly ? ` · needs ${money(r.neededMonthly)}/mo` : r.onTrack ? ' · ✅ on track' : ` · ⚠️ ${money(-r.shortfall.left)} short by ${monthLabel(r.shortfall.month)}`;
+      if (r.plan) {
+        const nextSave = r.plan.find((m) => m.save > 0);
+        sub += nextSave ? ` · save ${money(nextSave.save)}${nextSave.month === monthKey(today()) ? ' this month' : ` in ${monthLabel(nextSave.month)}`}` : ' · nothing more to save';
+      } else sub += !p.monthly ? ` · needs ${money(r.neededMonthly)}/mo` : r.onTrack ? ' · ✅ on track' : ` · ⚠️ ${money(-r.shortfall.left)} short by ${monthLabel(r.shortfall.month)}`;
     } else if (r.months) sub = `${r.months} month${r.months > 1 ? 's' : ''} to go · ready ${monthLabel(r.reachBy)}`;
     else sub = 'Set a monthly saving amount to see how long it takes';
     return `<button class="item block" data-proj="${p.id}">
@@ -1058,7 +1125,7 @@ function projectDetail(id) {
   if (!p) return;
   const r = projectPlan(p);
   const spare = forecastSpare();
-  const otherMonthly = state.projects.filter((x) => x.id !== p.id && !projectPlan(x).done).reduce((s, x) => s + (x.monthly || 0), 0);
+  const otherMonthly = state.projects.filter((x) => x.id !== p.id).map((x) => projectPlan(x)).filter((x) => !x.done).reduce((s, x) => s + x.monthlyNow, 0);
   const line = (k, v, cls = '') => `<div class="kv ${cls}"><span class="k">${k}</span><span class="v">${v}</span></div>`;
   let timeline = '';
   if (r.done) timeline = `<p class="status good">🎉 You have saved enough for this project.</p>`;
@@ -1066,10 +1133,24 @@ function projectDetail(id) {
     // Costs with dates and/or instalments: check every payment can be made on time.
     timeline += r.shortNow
       ? `<p class="status bad">⚠️ Some payments are due this month and you haven't saved enough for them yet.</p>` : '';
+    if (r.plan) {
+      timeline += `<p>💡 Save ${planSummary(r.plan)}. <span class="muted small">${planModeOf(p) === 'spread'
+        ? 'Spread out ahead of each big payment.' : 'Saved as each payment comes due.'} This updates by itself when you change the costs or what you've saved.</span></p>`;
+    } else {
     timeline += `<p>To make every payment on time, save at least <strong>${money(r.neededMonthly)}</strong> a month.`;
     timeline += !p.monthly ? ` <span class="muted">Add your monthly saving amount (Edit) to check your plan.</span></p>`
       : r.onTrack ? ` Saving ${money(p.monthly)} a month, <span class="status good">✅ you're on track</span>.</p>`
         : ` Saving ${money(p.monthly)} a month, <span class="status bad">⚠️ you'll be ${money(-r.shortfall.left)} short in ${monthLabel(r.shortfall.month, true)}</span>.</p>`;
+    }
+    if (r.plan) {
+      let have = r.saved, paid = 0;
+      timeline += `<div class="card-inset"><strong>Month by month</strong>
+        <div class="grid4 head"><span>Month</span><span>Save</span><span>Pay</span><span>Saved after</span></div>
+        ${r.plan.map((m) => { have += m.save; paid += m.pay; const parts = (r.timeline.find((t) => t.month === m.month) || { parts: [] }).parts;
+          return `<div class="grid4"><span>${monthLabel(m.month)}${parts.length ? `<br><span class="muted small">${parts.map((x) => esc(x.item.name) + (x.n > 1 ? ` ${x.k + 1}/${x.n}` : '')).join(', ')}</span>` : ''}</span>
+          <span>${money(m.save)}</span><span>${m.pay ? money(m.pay) : '–'}</span><span>${money(have - paid)}</span></div>`; }).join('')}
+        <p class="muted small" style="margin:6px 0 0">Starts from the ${money(r.saved)} you've saved.${r.undated ? ` ${money(r.undated)} of costs have no month and aren't included.` : ''}</p></div>`;
+    } else
     timeline += `<div class="card-inset"><strong>Payment timeline</strong>
       <div class="grid3 head"><span>Month</span><span>Pay</span><span>Savings left</span></div>
       ${r.timeline.map((m) => `<div class="grid3"><span>${monthLabel(m.month)}<br><span class="muted small">${m.parts.map((x) => esc(x.item.name) + (x.n > 1 ? ` ${x.k + 1}/${x.n}` : '')).join(', ')}</span></span>
@@ -1152,9 +1233,17 @@ function projectSheet(id) {
       <label id="pjAccWrap">Account
         <select id="pjAcc">${bankAccounts().map((a) => `<option value="${a.id}">${esc(a.name)} (${money(balance(a.id))})</option>`).join('')}</select>
       </label>
-      <label>How much you'll save each month
+      <label>How much to save each month
+        <select id="pjPlanMode">
+          <option value="due">Work it out — save as payments come due</option>
+          <option value="spread">Work it out — spread out ahead of big payments</option>
+          <option value="fixed">A fixed amount I choose</option>
+        </select>
+      </label>
+      <label id="pjMonthlyWrap">Amount each month
         <input id="pjMonthly" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" value="${p && p.monthly ? (p.monthly / 100).toFixed(2) : ''}">
       </label>
+      <div id="pjPlanPreview" class="card-inset small"></div>
       <label>Target date (optional)
         <input id="pjTarget" type="date" value="${p && p.targetDate ? p.targetDate : ''}">
       </label>
@@ -1170,6 +1259,23 @@ function projectSheet(id) {
   };
   $('#pjMode').addEventListener('change', modeUI);
   modeUI();
+  $('#pjPlanMode').value = p ? planModeOf(p) : 'due';
+  // Live preview of the saving plan from what's in the form.
+  function planPreview() {
+    const mode = $('#pjPlanMode').value;
+    $('#pjMonthlyWrap').classList.toggle('hidden', mode !== 'fixed');
+    const box = $('#pjPlanPreview');
+    box.classList.toggle('hidden', mode === 'fixed');
+    if (mode === 'fixed') return;
+    const draft = { items: items.filter((i) => i.amount > 0), targetDate: $('#pjTarget').value, planMode: mode, savedMode: $('#pjMode').value,
+      saved: toCents($('#pjSaved').value || '0') || 0, accountId: $('#pjAcc').value };
+    const r = projectPlan(draft);
+    box.innerHTML = r.done ? 'You already have enough saved.' : r.plan ? `💡 Save ${planSummary(r.plan)}.`
+      : 'Add the month each cost is needed (or a target date) and the amounts to save will be worked out.';
+  }
+  $('#projForm').addEventListener('input', planPreview);
+  $('#projForm').addEventListener('change', planPreview);
+  planPreview();
 
   function drawItems() {
     $('#pjItems').innerHTML = items.map((i, n) => `<div class="cost-item">
@@ -1230,6 +1336,7 @@ function projectSheet(id) {
       savedMode: $('#pjMode').value, saved: isNaN(saved) ? 0 : saved,
       accountId: $('#pjMode').value === 'account' ? $('#pjAcc').value : '',
       monthly: isNaN(monthly) ? 0 : monthly,
+      planMode: $('#pjPlanMode').value,
       targetDate: $('#pjTarget').value || ''
     };
     let id2 = p && p.id;
