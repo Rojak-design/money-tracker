@@ -826,7 +826,7 @@ function compressImage(file, maxSide = 1400, quality = 0.75) {
 $('#reconImage').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   const preview = $('#reconPreview');
-  if (!file) { reconImageData = null; preview.classList.add('hidden'); return; }
+  if (!file) { reconImageData = null; preview.classList.add('hidden'); $('#reconOcr').classList.add('hidden'); return; }
   try {
     reconImageData = await compressImage(file);
     preview.src = reconImageData;
@@ -834,8 +834,98 @@ $('#reconImage').addEventListener('change', async (e) => {
   } catch {
     reconImageData = null;
     toast('Could not read that image');
+    return;
   }
+  readBalanceFromScreenshot(file);
 });
+
+/* ---------- Reading the balance from a screenshot (on this phone, no upload) ----------
+   Uses Tesseract.js (bundled in /ocr, loaded the first time it's needed) to read the text in the screenshot,
+   then picks the amount most likely to be the balance. You can always change it. */
+let ocrWorker = null;
+let ocrRun = 0; // ignores results from an older screenshot if a new one was picked
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = resolve; s.onerror = () => reject(new Error('Could not load ' + src));
+    document.head.appendChild(s);
+  });
+}
+async function getOcrWorker(onProgress) {
+  if (ocrWorker) return ocrWorker;
+  if (!window.Tesseract) await loadScript('ocr/tesseract.min.js');
+  ocrWorker = await Tesseract.createWorker('eng', 1 /* LSTM only */, {
+    workerPath: 'ocr/worker.min.js', corePath: 'ocr/core', langPath: 'ocr/lang', gzip: true, workerBlobURL: false,
+    logger: (m) => { if (onProgress && m.status === 'recognizing text') onProgress(m.progress); }
+  });
+  return ocrWorker;
+}
+
+// Amounts in OCR text, best guess first: [{cents, label}]. Card screens: prefer the outstanding / current balance.
+function findBalanceCandidates(text, forCard) {
+  const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const re = /(S\$|SGD|\$)?\s*(\d{1,3}(?:[,\s]\d{3})+|\d+)[.,](\d{2})(?![\d%])/g;
+  const found = new Map();
+  lines.forEach((line, i) => {
+    for (const m of line.matchAll(re)) {
+      const cents = parseInt(m[2].replace(/[,\s]/g, ''), 10) * 100 + parseInt(m[3], 10);
+      if (!(cents > 0)) continue;
+      // The label is usually on the same line or the line above the amount.
+      const ctx = `${lines[i - 1] || ''} ${line}`.toLowerCase();
+      let score = m[1] ? 1 : 0;
+      if (/available\s*bal/.test(ctx)) score += forCard ? 1 : 6;
+      if (/(current|ledger|account|total)\s*bal/.test(ctx)) score += 5;
+      if (/outstanding|statement\s*bal|amount\s*due|total\s*due/.test(ctx)) score += forCard ? 6 : 2;
+      if (/balance/.test(ctx)) score += 3;
+      if (/available\s*(credit|limit)|credit\s*limit|\blimit\b|min(imum)?\.?\s*(payment|amount|due)|interest|reward|points|cashback|rebate|pending|spent|transaction/.test(ctx)) score -= 5;
+      const label = (/[a-z]{3,}/i.test(line.replace(m[0], '')) ? line.replace(m[0], '') : lines[i - 1] || '').replace(/[^\w\s&()'-]/g, ' ').replace(/\s+/g, ' ').replace(/^[\s-]+|[\s-]+$/g, '').slice(0, 40);
+      const prev = found.get(cents);
+      if (!prev || score > prev.score) found.set(cents, { cents, score, label });
+    }
+  });
+  return [...found.values()].sort((a, b) => b.score - a.score || b.cents - a.cents);
+}
+
+async function readBalanceFromScreenshot(file) {
+  const run = ++ocrRun;
+  const box = $('#reconOcr');
+  const show = (html) => { if (run === ocrRun) { box.innerHTML = html; box.classList.remove('hidden'); } };
+  show('🔎 Reading the balance from your screenshot…');
+  let text = '';
+  try {
+    const worker = await getOcrWorker((p) => show(`🔎 Reading the balance from your screenshot… ${Math.round(p * 100)}%`));
+    ({ data: { text } } = await worker.recognize(file));
+  } catch (err) {
+    console.warn(err);
+    show('Couldn\'t read the screenshot on this phone — type the balance below.');
+    return;
+  }
+  if (run !== ocrRun) return;
+  // If exactly one of your account names appears in the screenshot, pick that account.
+  let accNote = '';
+  const named = state.accounts.filter((a) => a.name.trim().length >= 3 && text.toLowerCase().includes(a.name.trim().toLowerCase()));
+  if (named.length === 1 && $('#reconAccount').value !== named[0].id) {
+    $('#reconAccount').value = named[0].id;
+    accNote = ` Account set to <strong>${esc(named[0].name)}</strong> (its name is in the screenshot).`;
+  }
+  const cands = findBalanceCandidates(text, isCard($('#reconAccount').value));
+  if (!cands.length) {
+    show('Couldn\'t find an amount in the screenshot — type the balance below.' + accNote);
+    updateReconCompare();
+    return;
+  }
+  const pick = (c) => {
+    $('#reconBank').value = (c.cents / 100).toFixed(2);
+    updateReconCompare();
+    box.querySelectorAll('.chip').forEach((x) => x.classList.toggle('on', +x.dataset.c === c.cents));
+  };
+  const best = cands[0];
+  show(`<div>✅ Found <strong>${money(best.cents)}</strong>${best.label ? ` next to “${esc(best.label)}”` : ''} and filled it in below. Please check it matches your screenshot.${accNote}</div>
+    ${cands.length > 1 ? `<div class="muted small" style="margin-top:6px">Not the right one? Tap another amount from the screenshot, or type it in:</div>
+    <div class="chips">${cands.slice(0, 6).map((c) => `<button type="button" class="chip" data-c="${c.cents}">${money(c.cents)}${c.label ? `<span>${esc(c.label)}</span>` : ''}</button>`).join('')}</div>` : ''}`);
+  box.querySelectorAll('.chip').forEach((x) => x.addEventListener('click', () => pick(cands.find((c) => c.cents === +x.dataset.c))));
+  pick(best);
+}
 
 $('#reconForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -860,6 +950,8 @@ $('#reconForm').addEventListener('submit', async (e) => {
   $('#reconNote').value = '';
   $('#reconImage').value = '';
   $('#reconPreview').classList.add('hidden');
+  $('#reconOcr').classList.add('hidden');
+  ocrRun++;
   reconImageData = null;
   render();
   toast(rec.bank === rec.app ? 'Saved — balances match ✅' : 'Saved — there is a difference');

@@ -10,7 +10,7 @@ Plain HTML, CSS and JavaScript — no build step. **All data stays on your phone
 - Log expenses and income: amount, category, date, note (tap an entry to edit or delete it). Entries dated in the future (e.g. PayLater instalments logged ahead) are **planned**: they're tagged in History, don't affect today's balances, and are added to the forecast in the period (and card bill) they fall in.
 - **Money back**: log refunds, or a friend paying you back for something you paid for, against the spending category it was for (e.g. Food). It goes into the account like income but is taken off that category, so category totals, the pie chart and the forecast show what you spent yourself.
 - Categories for every transaction, with a category filter in History. History also has a pie chart of spending by category for this month (or pay cycle), with ‹ › to look at earlier ones; tap a category to see its transactions. Add, rename or remove categories under **Backup → Manage categories**.
-- Daily reconciliation: attach a screenshot of your bank balance, type in the balance shown, and see the difference from the app's balance. Optionally add an adjustment to make them match, and choose which category the adjustment belongs to.
+- Daily reconciliation: attach a screenshot of your bank balance and the app **reads the balance from it** (on your phone, nothing is uploaded) — it fills in the amount next to “Available/Current/Outstanding balance” and lets you tap another amount or type it if it's wrong — and see the difference from the app's balance. Optionally add an adjustment to make them match, and choose which category the adjustment belongs to.
 - **Plan** tab:
   - **Recurring** – instalments, loan repayments, subscriptions, rent, salary… (amount, how often, when it ends). Shows what's due in the next 30 days and how many payments are left. Log a payment from it, or link a transaction to it when adding one.
   - **Loans** – a recurring payment can end "when a loan is paid off": enter what's still owed today, the repayment and the interest (already included in what's owed, or charged on what's left at a yearly rate). The app works out the payoff date, payments left, total to pay and interest, and lists loans with what's owed on the Accounts screen.
@@ -40,6 +40,7 @@ On iPhone, the home-screen app and Safari keep separate data — use the home-sc
 - `style.css` – the look
 - `app.js` – accounts, transactions, categories, reconciliation, backup
 - `plan.js` – recurring payments, savings projects and the forecast
+- `ocr/` – Tesseract.js (Apache 2.0, licences included) for reading balances from screenshots; loaded only when you pick a screenshot
 - `manifest.json`, `sw.js`, `icon*.png`, `icon.svg` – make it installable and work offline
 
 When you change any file, bump `VERSION` in `sw.js` and the matching `?v=` numbers in `index.html` (keep them all the same) so phones pick up the update with all files matching.
