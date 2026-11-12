@@ -7,6 +7,7 @@ Plain HTML, CSS and JavaScript — no build step. **All data stays on your phone
 - Multiple accounts (e.g. Savings, Spending) with a starting balance
 - Credit cards: log purchases on a card, see what you owe, what you spent this month and last, the next due date and available credit. **Pay card bill** moves money from a bank account to the card (not counted as spending). Reconcile a card by typing the amount owed shown by your bank. Set the card's statement closing day and due day so bills are worked out per statement cycle.
 - Log expenses and income: amount, category, date, note (tap an entry to edit or delete it)
+- **Money back**: log refunds, or a friend paying you back for something you paid for, against the spending category it was for (e.g. Food). It goes into the account like income but is taken off that category, so category totals, the pie chart and the forecast show what you spent yourself.
 - Categories for every transaction, with a category filter in History. History also has a pie chart of spending by category for this month (or pay cycle), with ‹ › to look at earlier ones; tap a category to see its transactions. Add, rename or remove categories under **Backup → Manage categories**.
 - Daily reconciliation: attach a screenshot of your bank balance, type in the balance shown, and see the difference from the app's balance. Optionally add an adjustment to make them match, and choose which category the adjustment belongs to.
 - **Plan** tab:
