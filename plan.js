@@ -1235,8 +1235,8 @@ function projectSheet(id) {
       </label>
       <label>How much to save each month
         <select id="pjPlanMode">
-          <option value="due">Work it out — save as payments come due</option>
-          <option value="spread">Work it out — spread out ahead of big payments</option>
+          <option value="due">Work it out: as payments are due</option>
+          <option value="spread">Work it out: spread out evenly</option>
           <option value="fixed">A fixed amount I choose</option>
         </select>
       </label>
@@ -1245,7 +1245,8 @@ function projectSheet(id) {
       </label>
       <div id="pjPlanPreview" class="card-inset small"></div>
       <label>Target date (optional)
-        <input id="pjTarget" type="date" value="${p && p.targetDate ? p.targetDate : ''}">
+        <span class="with-clear"><input id="pjTarget" type="date" value="${p && p.targetDate ? p.targetDate : ''}">
+        <button type="button" class="clear-btn" data-clear="#pjTarget" aria-label="Clear the target date">Clear</button></span>
       </label>
       <p class="muted small" style="margin:-6px 0 0">Costs without their own month are needed by the target date.</p>
       <button class="btn full" type="submit">Save</button>
@@ -1258,6 +1259,10 @@ function projectSheet(id) {
     $('#pjAccWrap').classList.toggle('hidden', !acc);
   };
   $('#pjMode').addEventListener('change', modeUI);
+  document.querySelectorAll('#projForm [data-clear]').forEach((b) => b.addEventListener('click', () => {
+    const inp = $(b.dataset.clear); inp.value = '';
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+  }));
   modeUI();
   $('#pjPlanMode').value = p ? planModeOf(p) : 'due';
   // Live preview of the saving plan from what's in the form.
@@ -1270,7 +1275,8 @@ function projectSheet(id) {
     const draft = { items: items.filter((i) => i.amount > 0), targetDate: $('#pjTarget').value, planMode: mode, savedMode: $('#pjMode').value,
       saved: toCents($('#pjSaved').value || '0') || 0, accountId: $('#pjAcc').value };
     const r = projectPlan(draft);
-    box.innerHTML = r.done ? 'You already have enough saved.' : r.plan ? `💡 Save ${planSummary(r.plan)}.`
+    const noMonth = r.undated ? ` <span class="status bad">${money(r.undated)} of costs have no month yet, so they aren't included — set “Needed in” for them or a target date.</span>` : '';
+    box.innerHTML = r.done ? 'You already have enough saved.' : r.plan ? `💡 Save ${planSummary(r.plan)}.${noMonth}`
       : 'Add the month each cost is needed (or a target date) and the amounts to save will be worked out.';
   }
   $('#projForm').addEventListener('input', planPreview);
@@ -1284,8 +1290,9 @@ function projectSheet(id) {
         <input data-ia="${n}" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0.00" value="${i.amount ? (i.amount / 100).toFixed(2) : ''}" aria-label="Amount">
         <button type="button" class="icon-btn" data-ix="${n}" aria-label="Remove cost">✕</button></div>
       <div class="cost-when">
-        <label>${i.instalments > 1 ? 'First payment' : 'Needed in'}<input type="month" data-idue="${n}" value="${i.due || ''}"></label>
-        <label>How it's paid<select data-ipay="${n}"><option value="once">All at once</option><option value="inst">In instalments</option></select></label>
+        <label>${i.instalments > 1 ? 'First payment' : 'Needed in'}<span class="with-clear"><input type="month" data-idue="${n}" value="${i.due || ''}">
+          <button type="button" class="clear-btn" data-clear-due="${n}" aria-label="Clear the month">✕</button></span></label>
+        <label>How it's paid<select data-ipay="${n}"><option value="once">Once</option><option value="inst">Instalments</option></select></label>
       </div>
       <label class="cost-count ${i.instalments > 1 ? '' : 'hidden'}">Number of monthly payments
         <input type="number" inputmode="numeric" min="2" step="1" data-icount="${n}" value="${i.instalments > 1 ? i.instalments : ''}" placeholder="e.g. 12"></label>
@@ -1297,6 +1304,10 @@ function projectSheet(id) {
       const v = toCents(x.value); items[+x.dataset.ia].amount = isNaN(v) ? 0 : v; total(); sum(+x.dataset.ia);
     }));
     $('#pjItems').querySelectorAll('[data-idue]').forEach((x) => x.addEventListener('input', () => { items[+x.dataset.idue].due = x.value; sum(+x.dataset.idue); }));
+    $('#pjItems').querySelectorAll('[data-clear-due]').forEach((x) => x.addEventListener('click', () => {
+      const n = +x.dataset.clearDue; items[n].due = ''; $(`[data-idue="${n}"]`).value = ''; sum(n);
+      $('#projForm').dispatchEvent(new Event('input'));
+    }));
     $('#pjItems').querySelectorAll('[data-ipay]').forEach((x) => {
       const n = +x.dataset.ipay;
       x.value = items[n].instalments > 1 ? 'inst' : 'once';

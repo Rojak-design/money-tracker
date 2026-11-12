@@ -326,3 +326,11 @@ label.check input { width: 22px; height: 22px; flex: none; }
 .grid4:last-child { border-bottom: 0; }
 .grid4 > span:not(:first-child) { text-align: right; font-weight: 600; white-space: nowrap; }
 .grid4.head { color: var(--muted); font-size: 12px; font-weight: 600; }
+
+/* A date field with a Clear button (Android's picker can't empty a date) */
+.with-clear { display: flex; gap: 6px; align-items: center; }
+.with-clear input { flex: 1; min-width: 0; }
+.clear-btn { flex: none; border: 1px solid var(--line); background: var(--card); color: var(--muted); border-radius: 10px;
+  padding: 10px 10px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.cost-when { grid-template-columns: 1.25fr 1fr; }
+.cost-when .clear-btn { padding: 8px 9px; }
