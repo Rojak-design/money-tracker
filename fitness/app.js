@@ -16,19 +16,22 @@
 
 /* ---------- Categories (you can add, rename, recolour and delete them) ---------- */
 const DEFAULT_CATS = [
-  { id: 'strength', name: 'Strength', icon: '🏋️', color: '#ea580c', words: ['strength', 'weightlifting', 'lifting', 'weights', 'powerlifting'] },
+  { id: 'strength', name: 'Strength', icon: '🏋️‍♀️', color: '#ea580c', words: ['strength', 'lifting', 'weights', 'powerlifting'] },
+  { id: 'weightlifting', name: 'Weightlifting', icon: '🏋️‍♀️', color: '#b45309', words: ['weightlifting', 'olympic', 'snatch', 'clean and jerk'] },
   { id: 'crossfit', name: 'CrossFit', icon: '⚡', color: '#dc2626', words: ['crossfit', 'wod', 'metcon', 'amrap', 'emom', 'hiit'] },
-  { id: 'gymnastics', name: 'Gymnastics', icon: '🤸', color: '#9333ea', words: ['gymnastics', 'handstand', 'muscle-up'] },
-  { id: 'easy', name: 'Easy run', icon: '🏃', color: '#16a34a', words: ['easy', 'recovery run', 'run', 'running', 'jog'] },
+  { id: 'gymnastics', name: 'Gymnastics', icon: '🤸‍♀️', color: '#9333ea', words: ['gymnastics', 'handstand', 'muscle-up'] },
+  { id: 'easy', name: 'Easy run', icon: '🏃‍♀️', color: '#16a34a', words: ['easy', 'recovery run', 'run', 'running', 'jog'] },
   { id: 'tempo', name: 'Tempo run', icon: '🔥', color: '#d97706', words: ['tempo', 'threshold', 'progression'] },
   { id: 'intervals', name: 'Intervals', icon: '⏱️', color: '#2563eb', words: ['interval', 'repeats', 'track', 'fartlek', 'speed'] },
   { id: 'long', name: 'Long run', icon: '🛣️', color: '#0d9488', words: ['long run', 'long'] },
   { id: 'race', name: 'Race', icon: '🏅', color: '#ca8a04', words: ['race', 'parkrun', 'marathon'] },
-  { id: 'cycling', name: 'Cycling', icon: '🚴', color: '#0891b2', words: ['cycling', 'bike', 'ride', 'spin'] },
-  { id: 'swim', name: 'Swimming', icon: '🏊', color: '#0284c7', words: ['swim', 'pool'] },
+  { id: 'cycling', name: 'Cycling', icon: '🚴‍♀️', color: '#0891b2', words: ['cycling', 'bike', 'ride', 'spin'] },
+  { id: 'swim', name: 'Swimming', icon: '🏊‍♀️', color: '#0284c7', words: ['swim', 'pool'] },
   { id: 'other', name: 'Other', icon: '💪', color: '#64748b', words: [] }
 ];
-const ICONS = ['🏋️', '⚡', '🤸', '🏃', '🔥', '⏱️', '🛣️', '🏅', '🚴', '🏊', '🚶', '🥾', '🧘', '⚽', '🎾', '🥊', '🧗', '🚣', '⛷️', '💃', '❤️', '💪'];
+const ICONS = ['🏋️‍♀️', '⚡', '🤸‍♀️', '🏃‍♀️', '🔥', '⏱️', '🛣️', '🏅', '🚴‍♀️', '🏊‍♀️', '🚶‍♀️', '🥾', '🧘‍♀️', '🤾‍♀️', '🚣‍♀️', '🧗‍♀️', '⛹️‍♀️', '🤽‍♀️', '🏄‍♀️', '⛷️', '💃', '🥊', '🎾', '⚽', '🏸', '❤️', '💪', '⭐'];
+// The icons of the first version, swapped for the female ones.
+const FEMALE = { '🏋️': '🏋️‍♀️', '🤸': '🤸‍♀️', '🏃': '🏃‍♀️', '🚴': '🚴‍♀️', '🏊': '🏊‍♀️', '🚶': '🚶‍♀️', '🧘': '🧘‍♀️', '🧗': '🧗‍♀️', '🚣': '🚣‍♀️' };
 const COLORS = ['#ea580c', '#dc2626', '#db2777', '#9333ea', '#2563eb', '#0284c7', '#0891b2', '#0d9488', '#16a34a', '#65a30d', '#ca8a04', '#d97706', '#64748b'];
 const sameName = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
 const OTHER = { id: 'other', name: 'Other', icon: '💪', color: '#64748b', words: [] };
@@ -65,7 +68,21 @@ async function load() {
 // Fill in anything added in newer versions. Returns true if something changed.
 function migrate() {
   let changed = false;
-  if (!state.categories.length) { state.categories = DEFAULT_CATS.map((c) => Object.assign({}, c, { words: c.words.slice() })); changed = true; }
+  if (!state.categories.length) { state.categories = DEFAULT_CATS.map((c) => Object.assign({}, c, { words: c.words.slice() })); state.settings.catsV2 = true; changed = true; }
+  // Female icons, and Weightlifting as a category of its own (after Strength): activities it now matches move to it,
+  // unless you picked their category yourself.
+  if (!state.settings.catsV2) {
+    for (const c of state.categories) if (FEMALE[c.icon]) c.icon = FEMALE[c.icon];
+    if (!state.categories.some((c) => c.id === 'weightlifting' || sameName(c.name, 'Weightlifting'))) {
+      const st = state.categories.find((c) => c.id === 'strength');
+      if (st) st.words = (st.words || []).filter((w) => w !== 'weightlifting');
+      const wl = DEFAULT_CATS.find((c) => c.id === 'weightlifting');
+      state.categories.splice(st ? state.categories.indexOf(st) + 1 : 0, 0, Object.assign({}, wl, { words: wl.words.slice() }));
+      for (const a of state.activities) if (a.catId === 'strength' && guessCat(a.name) === 'weightlifting') a.catId = 'weightlifting';
+    }
+    state.settings.catsV2 = true;
+    changed = true;
+  }
   // Workouts logged in the earlier version go on the calendar (the workouts themselves are kept as they were).
   if (!state.settings.calendarFromWorkouts) {
     for (const w of state.workouts || []) {
@@ -179,6 +196,7 @@ function openSheet(title, html) {
   document.body.style.overflow = 'hidden';
 }
 function closeSheet() {
+  catsBack = null;
   $('#sheet').classList.add('hidden');
   document.body.style.overflow = '';
   if (updateReady) location.reload();
@@ -263,6 +281,7 @@ function renderCalendar() {
 const catOptions = (sel) => state.categories.map((c) => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${c.icon} ${esc(c.name)}</option>`).join('');
 // A day's sessions: change their category or name, add or delete.
 function daySheet(iso, addNew) {
+  reopen = () => daySheet(iso);
   const acts = dayActs(iso);
   const row = (a) => `<div class="act-row" data-id="${a ? a.id : ''}">
       <select class="acat" aria-label="Category">${catOptions(a ? a.catId : guessCat(''))}</select>
@@ -272,7 +291,7 @@ function daySheet(iso, addNew) {
   openSheet(niceDate(iso), `<form class="form" id="dForm" novalidate>
       <label>Date <input type="date" id="dDate" value="${esc(iso)}" required></label>
       <div id="acts">${acts.map(row).join('')}</div>
-      <button type="button" class="mini-btn" id="addAct">+ Add a session</button>
+      <div class="row-btns"><button type="button" class="mini-btn" id="addAct">+ Add a session</button><button type="button" class="link-btn" data-cats>Edit categories ›</button></div>
       <div class="hint">The category is what shows on the calendar. Change it for an imported name and that name gets this category next time too.</div>
       <button class="btn" type="submit">Save</button>
     </form>`);
@@ -310,6 +329,7 @@ function daySheet(iso, addNew) {
 }
 
 /* ---------- Managing categories ---------- */
+let catsBack = null;
 function catsSheet() {
   openSheet('Categories', `<div class="form">
       <div class="hint">Shown on the calendar in this order. Each has words that put an activity in it by its name — the longest word found wins, so "Tempo run" is a tempo run even though "run" means an easy run.</div>
@@ -317,14 +337,20 @@ function catsSheet() {
         <span class="ico" style="background:color-mix(in srgb, ${c.color} 22%, transparent)">${c.icon}</span>
         <button type="button" class="left link-like" data-cat="${c.id}"><div class="title">${esc(c.name)}</div><div class="sub">${esc((c.words || []).join(', ')) || (c.id === 'other' ? 'anything not matched' : 'no words')}</div></button>
         <span class="order"><button type="button" class="icon-btn" data-up="${i}" ${i ? '' : 'disabled'} aria-label="Move up">↑</button><button type="button" class="icon-btn" data-down="${i}" ${i < state.categories.length - 1 ? '' : 'disabled'} aria-label="Move down">↓</button></span></div>`).join('')}</div>
-      <button type="button" class="btn secondary" id="newCat">+ New category</button></div>`);
+      <button type="button" class="btn secondary" id="newCat">+ New category</button>
+      ${catsBack ? '<button type="button" class="btn" id="catsDone">Done</button>' : ''}</div>`);
+  if (catsBack) $('#catsDone').addEventListener('click', () => { const b = catsBack; catsBack = null; b(); });
   $$('[data-cat]').forEach((b) => b.addEventListener('click', () => catSheet(b.dataset.cat)));
   const move = async (i, j) => { const c = state.categories; [c[i], c[j]] = [c[j], c[i]]; await save(); catsSheet(); render(); };
   $$('[data-up]').forEach((b) => b.addEventListener('click', () => move(+b.dataset.up, +b.dataset.up - 1)));
   $$('[data-down]').forEach((b) => b.addEventListener('click', () => move(+b.dataset.down, +b.dataset.down + 1)));
   $('#newCat').addEventListener('click', () => catSheet(null));
 }
-$('#catsBtn').addEventListener('click', catsSheet);
+$('#catsBtn').addEventListener('click', () => { catsBack = null; catsSheet(); });
+// "Edit categories" in the day and import screens.
+document.addEventListener('click', (e) => { const b = e.target.closest('[data-cats]'); if (b) { catsBack = reopen; catsSheet(); } });
+// The day or import screen open now, to go back to after editing categories.
+let reopen = null;
 function catSheet(id) {
   const c = id ? state.categories.find((x) => x.id === id) : null;
   const used = c ? state.activities.filter((a) => a.catId === c.id).length : 0;
