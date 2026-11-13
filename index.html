@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-title" content="Rojak">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <!-- When app files change, bump ?v= here, in money/index.html and the version in sw.js (keep them all the same). -->
-  <link rel="stylesheet" href="core/home.css?v=29">
+  <link rel="stylesheet" href="core/home.css?v=30">
 </head>
 <body>
   <!-- She and the cat peek over the top edge of the Money card; the header's bottom is that edge. -->
@@ -44,21 +44,47 @@
       <div class="card soon"><span class="module-icon">🗓️</span><h2>Scheduler</h2><div class="muted small">Coming soon</div></div>
     </div>
 
+    <!-- Backup and restore for the whole app: one file with every module (screenshots are never included) -->
     <div class="card backup">
       <h2>💾 Backup</h2>
       <p class="muted small" id="backupInfo">Everything in Rojak is saved only on this phone. Keep a backup file somewhere safe.</p>
       <button class="btn" id="exportBtn">Export backup</button>
-      <p class="muted small">To restore a backup, open Money → Backup → Import backup.</p>
+      <label class="btn secondary file-btn">Restore from backup
+        <input type="file" id="restoreFile" accept=".json,application/json">
+      </label>
+      <p class="muted small">A backup holds every module (Money, Fitness…). Restoring lets you choose which ones to bring back. Screenshots are never included.</p>
+      <div id="undoBox" class="sub-box hidden">
+        <p class="muted small" id="undoInfo"></p>
+        <button class="btn secondary" id="undoBtn">Undo</button>
+      </div>
+      <div id="shotsBox" class="sub-box hidden">
+        <p class="muted small" id="shotsInfo"></p>
+        <button class="btn secondary" id="shotsBtn">Delete saved screenshots</button>
+      </div>
+      <button class="btn danger" id="wipeBtn">Delete all data</button>
+      <p class="muted small" id="storageInfo"></p>
     </div>
 
     <p id="hairNote" class="muted small center"></p>
   </main>
 
+  <!-- Restore: pick which modules to bring back from the backup file -->
+  <div id="sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-backdrop" data-close></div>
+    <div class="sheet-panel">
+      <div class="sheet-head">
+        <h2 id="sheetTitle">Restore from backup</h2>
+        <button class="icon-btn" data-close aria-label="Close">✕</button>
+      </div>
+      <div id="sheetBody"></div>
+    </div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
 
-  <script src="core/store.js?v=29"></script>
-  <script src="core/avatar.js?v=29"></script>
-  <script src="core/cat.js?v=29"></script>
-  <script src="core/home.js?v=29"></script>
+  <script src="core/store.js?v=30"></script>
+  <script src="core/avatar.js?v=30"></script>
+  <script src="core/cat.js?v=30"></script>
+  <script src="core/home.js?v=30"></script>
 </body>
 </html>

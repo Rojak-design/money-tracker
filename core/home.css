@@ -1,14 +1,14 @@
 /* Rojak home screen. Colours match the money tracker. */
 :root {
   --bg: #f4f6f8; --card: #ffffff; --text: #1f2933; --muted: #6b7785; --line: #e3e7eb;
-  --primary: #0f766e; --primary-soft: #d9f0ed; --green: #15803d; --red: #c2410c;
+  --primary: #0f766e; --primary-soft: #d9f0ed; --green: #15803d; --red: #c2410c; --danger: #b91c1c;
   --radius: 14px;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #111518; --card: #1b2125; --text: #e8ecef; --muted: #94a0ab; --line: #2b3338;
-    --primary: #2dd4bf; --primary-soft: #123a36; --green: #4ade80; --red: #fb923c;
+    --primary: #2dd4bf; --primary-soft: #123a36; --green: #4ade80; --red: #fb923c; --danger: #f87171;
   }
 }
 * { box-sizing: border-box; }
@@ -79,6 +79,27 @@ main { padding: 0 16px; max-width: 640px; margin: 0 auto; }
   padding: 14px 16px; background: var(--primary); color: #fff; cursor: pointer; margin: 8px 0 4px;
 }
 @media (prefers-color-scheme: dark) { .btn { color: #06201d; } }
+.btn.secondary { background: var(--primary-soft); color: var(--primary); }
+.btn.danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); margin-top: 14px; }
+.file-btn { position: relative; overflow: hidden; text-align: center; }
+.file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.sub-box { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 4px; }
+
+/* Restore sheet */
+.sheet { position: fixed; inset: 0; z-index: 20; }
+.sheet-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.4); }
+.sheet-panel {
+  position: absolute; left: 0; right: 0; bottom: 0; max-height: 90vh; overflow-y: auto; max-width: 640px; margin: 0 auto;
+  background: var(--card); border-radius: 18px 18px 0 0; padding: 8px 16px calc(env(safe-area-inset-bottom, 0px) + 20px);
+}
+.sheet-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 0 12px; }
+.sheet-head h2 { font-size: 20px; }
+.icon-btn { border: 0; background: var(--bg); color: var(--text); width: 36px; height: 36px; border-radius: 50%; font-size: 16px; cursor: pointer; }
+.pick { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 12px; background: var(--bg); margin-bottom: 8px; }
+.pick input { width: 22px; height: 22px; flex: none; margin: 1px 0 0; accent-color: var(--primary); }
+.pick strong { display: block; }
+.warn { background: #fdecea; color: #8a1c1c; border-radius: 12px; padding: 10px 12px; font-size: 14px; margin: 10px 0; }
+@media (prefers-color-scheme: dark) { .warn { background: #3a1717; color: #fecaca; } }
 
 .toast {
   position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 24px); transform: translateX(-50%);
