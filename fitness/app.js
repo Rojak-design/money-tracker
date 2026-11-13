@@ -10,7 +10,7 @@
      lifts:             { id, date, name, weightKg, reps, source }   any weight × reps; bests and est. 1RM worked out
      runRecords:        { id, date, distance: '5k' | '10k' | 'half' | 'full', timeSec, source }   run times
      bodyMeasurements:  { id, date, weightKg, heightCm, bodyFatPct }          one per day
-     recoveryDays:      { id, date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, strain, bodyBattery, source,
+     recoveryDays:      { id, date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, bodyBattery, source,
                           sources: { field: 'Whoop' | 'Garmin' } for numbers read from a screenshot }  one per day
    Kept from earlier versions (not shown, not changed): workoutTypes, workouts, importAliases.
    Numbers left empty are saved as null. */
@@ -697,7 +697,6 @@ const RECOVERY_FIELDS = [
   { key: 'restingHr', label: 'Resting heart rate', unit: 'bpm', min: 25, max: 150, dp: 0, ph: 'e.g. 54' },
   { key: 'sleepHours', label: 'Sleep', unit: 'hours', min: 0, max: 24, dp: 2, ph: 'e.g. 7:30' },
   { key: 'sleepScore', label: 'Sleep quality', unit: '% (Whoop sleep performance, Garmin sleep score)', min: 0, max: 100, dp: 0, ph: 'e.g. 85' },
-  { key: 'strain', label: 'Strain', unit: '0–21', min: 0, max: 21, dp: 1, ph: 'e.g. 12.4' },
   { key: 'bodyBattery', label: 'Body Battery', unit: '0–100 (Garmin)', min: 0, max: 100, dp: 0, ph: 'e.g. 48' }
 ];
 // Whoop's colours for the recovery score: green 67+, yellow 34–66, red below.
@@ -726,7 +725,7 @@ function renderRecovery() {
   list.innerHTML = rs.map((r) => {
     const sub = [r.hrvMs != null ? `HRV ${fmt(r.hrvMs, 0)} ms` : '', r.restingHr != null ? `RHR ${fmt(r.restingHr, 0)}` : '',
       r.sleepHours != null ? `Sleep ${fmtSleep(r.sleepHours)}${r.sleepScore != null ? ` (${fmt(r.sleepScore, 0)}%)` : ''}` : r.sleepScore != null ? `Sleep ${fmt(r.sleepScore, 0)}%` : '',
-      r.strain != null ? `Strain ${fmt(r.strain, 1)}` : '', r.bodyBattery != null ? `Body Battery ${fmt(r.bodyBattery, 0)}` : ''].filter(Boolean).join(' · ');
+      r.bodyBattery != null ? `Body Battery ${fmt(r.bodyBattery, 0)}` : ''].filter(Boolean).join(' · ');
     return `<button class="item" data-r="${r.id}">
       <span class="ico" aria-hidden="true">🔋</span>
       <div class="left"><div class="title">${esc(niceDate(r.date))}</div><div class="sub">${esc(sub) || '&nbsp;'}</div></div>
