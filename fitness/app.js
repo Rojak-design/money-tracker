@@ -660,7 +660,7 @@ function recoveryValue(r, key) {
 function renderRecovery() {
   const rs = [...state.recoveryDays].sort(byDateDesc);
   $('#recoveryLatest').innerHTML = rs.length ? `<div class="card"><h2>Latest</h2><div class="tiles">
-    ${RECOVERY_FIELDS.map((f) => { const r = latestWith(rs, f.key); return `<div class="tile"><div class="label">${f.key === 'restingHr' ? 'Resting HR' : f.label}</div>
+    ${RECOVERY_FIELDS.map((f) => { const r = latestWith(rs, f.key); return `<div class="tile"><div class="label">${f.key === 'restingHr' ? 'Resting HR' : f.key === 'recoveryScore' ? 'Recovery' : f.label}</div>
       <div class="value"${f.key === 'recoveryScore' && r ? ` style="color:${recoveryColor(r.recoveryScore)}"` : ''}>${r ? recoveryValue(r, f.key) : '–'}</div>
       <div class="label">${r ? esc(niceDate(r.date)) : '&nbsp;'}</div></div>`; }).join('')}
     </div></div>` : '';

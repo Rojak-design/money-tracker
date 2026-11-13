@@ -1,11 +1,12 @@
 # Rojak
 
-Rojak is a home screen that links to separate mini apps (modules). It runs in your phone's browser and can be
+Rojak is a home screen that links to separate mini apps (modules): Money and Fitness so far. It runs in your phone's browser and can be
 installed on your home screen. Plain HTML, CSS and JavaScript — no build step. **All data stays on your phone.**
 
 ## Home screen
 - **Money** card: what you spent today and your net total (the same total as on the Accounts screen: bank accounts minus the card bills due this month / pay cycle). Tap it to open the money tracker.
-- **Habits, Fitness, Books / Music, Scheduler**: placeholders for modules to be built later.
+- **Fitness** card: your last workout and latest recovery score. Tap it to open Fitness.
+- **Habits, Books / Music, Scheduler**: placeholders for modules to be built later.
 - **Backup** (for the whole app, every module at once):
   - **Export backup**: one file with everything in Rojak (Money, Fitness…). Screenshots are never included, so the file stays small.
   - **Restore from backup**: shows what's in the file and what's on the phone for each module, and lets you tick which modules to bring back; the ticked ones are replaced, the others stay as they are. Older Money backup files (`money-backup-….json`) and earlier Rojak backups restore too (their screenshots are skipped).
@@ -41,6 +42,20 @@ own date). The money tracker's data stays where it always was, so earlier data a
 - Backup and restore are on the Rojak home screen (Money → Settings links there).
 - Works offline, has light and dark mode
 
+## Fitness module
+Coral-coloured, so it's easy to tell apart from Money. Three tabs:
+- **Workouts** – log any workout with its date, type, duration and notes. Tap a workout to edit or delete it, or **Log again** to start a new one from it (same movements and sets).
+  - **Workout types** (link at the top of Workouts): add your own types, rename them, change their icon, reorder them with the arrows, hide ones you don't use, or delete ones with no workouts. Each type logs one of: **Distance & pace**, **Movements & sets** or **Time & notes**. To start with: Run, Cycle, Swim, Walk, Hike (distance & pace); Strength, Weightlifting, CrossFit, Functional (movements & sets, each with its own list of movements); Yoga, Sport, Other (time & notes). Renaming a type or one of its movements renames it in past workouts too. What a type logs can't change once it has workouts.
+  - **Distance & pace**: distance, time, pace and average heart rate. Fill in any two of distance, time and pace and the third is worked out. Each type shows pace as min:sec per km, km/h, or min:sec per 100 m with the distance in metres (as for swimming).
+  - **Movements & sets**: add movements (that type's movements are suggested first, or type a new one and it's added to the type's list), each with sets of reps and weight in kg (weight can be left empty). **+ Add set** copies the set before it.
+- **Body** – body weight, height and (optionally) body fat %, one entry per day. Shows the latest weight and the change since the entry before, BMI and body fat.
+- **Recovery** – recovery score, HRV, resting heart rate, sleep (h:mm or hours), sleep score and strain, one entry per day. The recovery score is green (67%+), yellow (34–66%) or red, as in Whoop.
+
+Saved in the shared store under `mod:fitness`, every entry with its own `date` (YYYY-MM-DD), so other modules (e.g. a habit tracker) can read it:
+`workoutTypes` (`{id, name, icon, kind: cardio|strength|other, pace, movements: [names], hidden}`, in the order shown),
+`workouts` (`{date, typeId, type (the type's name), kind, durationMin, notes, cardio: {distanceKm, timeSec, paceSecPerKm, avgHr}, movements: [{name, sets: [{reps, weightKg}]}]}`),
+`bodyMeasurements` (`{date, weightKg, heightCm, bodyFatPct}`), `recoveryDays` (`{date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, strain}`). Empty numbers are saved as `null`.
+
 ## Publish with GitHub Pages
 1. On GitHub, open this repository → **Settings** → **Pages**.
 2. Under **Build and deployment**, set Source to **Deploy from a branch**.
@@ -63,7 +78,8 @@ On iPhone, the home-screen app and Safari keep separate data — use the home-sc
 - `core/avatar.js` – her drawing, its monthly hair colours and her waving hand
 - `core/cat.js` – the cat and its monthly breeds
 - `money/` – the money tracker: `index.html`, `style.css`, `app.js` (accounts, transactions, categories, reconciliation, settings), `plan.js` (recurring payments, savings projects, trips and the forecast)
+- `fitness/` – the fitness module: `index.html`, `style.css`, `app.js` (workouts and workout types, body measurements, recovery)
 - `money/ocr/` – Tesseract.js (Apache 2.0, licences included) for reading balances from screenshots; loaded only when you pick a screenshot
 - `manifest.json`, `sw.js`, `rojak-icon*`, `rojak-apple-touch-icon.png` – make it installable and work offline (`icon-v2.svg`, `apple-touch-icon-v2.png` are the money tracker's own tab icon)
 
-When you change any file, bump `VERSION` in `sw.js` and the matching `?v=` numbers in `index.html` and `money/index.html` (keep them all the same) so phones pick up the update with all files matching.
+When you change any file, bump `VERSION` in `sw.js` and the matching `?v=` numbers in `index.html`, `money/index.html` and `fitness/index.html` (keep them all the same) so phones pick up the update with all files matching.
