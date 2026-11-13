@@ -231,6 +231,12 @@ select { appearance: none; -webkit-appearance: none;
 .kv .v { font-weight: 600; white-space: nowrap; }
 .kv.total { font-weight: 700; }
 .kv.total .k { color: var(--text); }
+.kv.sub { font-size: 13px; padding: 3px 0 3px 12px; border-bottom: 0; }
+.kv.sub .v { font-weight: 500; color: var(--muted); }
+.kv.sub .k { overflow: visible; }
+.kv:has(+ .kv.sub) { border-bottom: 0; }
+.kv.sub + .kv:not(.sub) { border-top: 1px solid var(--line); }
+.link-btn.small { font-size: 13px; margin-left: 4px; }
 
 .progress { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 8px; }
 .progress > div { height: 100%; background: var(--primary); border-radius: 4px; }

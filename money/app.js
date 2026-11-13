@@ -177,6 +177,7 @@ function render() {
 function renderAccounts() {
   const list = $('#accountList');
   let total = 0;
+  const dueNow = {}; // card id -> bills due this month / pay cycle
   if (!state.accounts.length) {
     list.innerHTML = `<div class="empty">No accounts yet.<br>Tap “New account” to add a bank account (e.g. Savings) or a credit card.</div>`;
   } else {
@@ -186,11 +187,16 @@ function renderAccounts() {
       const last = state.reconciliations.filter((r) => r.accountId === a.id).sort((x, y) => (y.date + y.id).localeCompare(x.date + x.id))[0];
       const checked = last ? `Checked ${niceDate(last.date)}` : 'Not reconciled yet';
       if (a.type === 'credit') {
-        const due = nextDueDate(a);
-        const sub = [due ? `Due ${niceDate(due)}` : '', a.payFromId ? `paid from ${esc(accountName(a.payFromId))}` : '', checked].filter(Boolean).join(' · ');
+        // A card shows the bills due in this month / pay cycle (what leaves the bank for it now), not all it owes.
+        const d = cardDueIn(a);
+        total += -b - d.amount; // undo the full balance added above; count only what's due now
+        dueNow[a.id] = d.amount;
+        const due = d.bills.length ? d.bills.map((x) => x.due).filter((x) => x >= today())[0] || d.bills[d.bills.length - 1].due : nextDueDate(a);
+        const sub = [due ? `${d.bills.length && d.amount ? 'Due' : 'Next bill'} ${niceDate(due)}` : '', -b > 0 ? `${money(-b)} owed in total` : '',
+          checked].filter(Boolean).join(' · ');
         return `<button class="item" data-acc="${a.id}">
           <div class="left"><div class="title">💳 ${esc(a.name)}</div><div class="sub">${sub}</div></div>
-          <div class="amt-col"><div class="amt ${-b > 0 ? 'neg' : ''}">${money(Math.max(0, -b))}</div><div class="sub">${b > 0 ? 'in credit' : 'owed'}</div></div></button>`;
+          <div class="amt-col"><div class="amt ${d.amount > 0 ? 'neg' : ''}">${money(d.amount)}</div><div class="sub">due this ${periodWord()}</div></div></button>`;
       }
       return `<button class="item" data-acc="${a.id}">
         <div class="left"><div class="title">${esc(a.name)}</div><div class="sub">${checked}</div></div>
@@ -212,16 +218,23 @@ function renderAccounts() {
     }).join('') + `</div><p class="muted small" style="margin-top:-6px">Loans aren't included in the total at the top. Tap one to update it.</p>` : '';
   $('#loanList').querySelectorAll('[data-loan]').forEach((el) => el.addEventListener('click', () => recurringSheet(el.dataset.loan)));
   const cardOwed = cardAccounts().reduce((s, a) => s + Math.max(0, owed(a.id)), 0);
+  const cardDue = Object.values(dueNow).reduce((s, v) => s + v, 0);
   const bankTotal = bankAccounts().reduce((s, a) => s + balance(a.id), 0);
-  $('#totalLabel').textContent = cardAccounts().length ? 'Net total (bank accounts − card bills)' : 'Total of all accounts';
+  $('#totalLabel').textContent = cardAccounts().length ? `Net total (bank accounts − card bills due this ${periodWord()})` : 'Total of all accounts';
   $('#totalBalance').textContent = money(total);
   $('#totalSplit').innerHTML = cardAccounts().length
-    ? `In the bank ${money(bankTotal)} · Owed on cards ${money(cardOwed)}` : '';
+    ? `In the bank ${money(bankTotal)} · Card bills due this ${periodWord()} ${money(cardDue)}<br>Owed on cards in total ${money(cardOwed)}` : '';
+  // The home screen shows the same net total; it can't work out statements itself, so keep it the card
+  // amounts due until the end of this month / pay cycle (after that it falls back to the full amount owed).
+  const p = periodContaining(today());
+  const summary = { until: p.end, byCard: dueNow };
+  if (cardAccounts().length && JSON.stringify(state.cardsDue) !== JSON.stringify(summary)) { state.cardsDue = summary; save(); }
   list.querySelectorAll('[data-acc]').forEach((el) => el.addEventListener('click', () => accountSheet(el.dataset.acc)));
 }
 
 let txFilter = 'all';
 let txCatFilter = 'all';
+let txAllDates = false; // true = list every date, not just the month / pay cycle shown in the chart
 function renderTx() {
   const sel = $('#txFilter');
   sel.innerHTML = `<option value="all">All accounts</option>` +
@@ -237,26 +250,34 @@ function renderTx() {
   if (txCatFilter !== 'all' && !cats.includes(txCatFilter)) txCatFilter = 'all';
   catSel.value = txCatFilter;
 
-  const txs = state.transactions
+  const matching = state.transactions
     .filter((t) => txFilter === 'all' || t.accountId === txFilter)
     .filter((t) => txCatFilter === 'all' || t.category === txCatFilter)
     .sort((a, b) => (b.date + b.id).localeCompare(a.date + a.id));
+  // The list shows the same month / pay cycle as the chart above it (unless "Show all dates" is on).
+  const p = shownPeriod();
+  const txs = txAllDates ? matching : matching.filter((t) => t.date >= p.start && t.date <= p.end);
   renderSpendPie();
   const list = $('#txList');
   const totalEl = $('#txTotal');
-  if (!txs.length) {
-    totalEl.classList.add('hidden');
-    list.innerHTML = `<div class="empty">No transactions yet.<br>Tap the + button to add one.</div>`;
-    return;
-  }
-  if (txCatFilter !== 'all') {
-    const net = txs.reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0);
-    const p = periodContaining(today());
-    const month = txs.filter((t) => t.date >= p.start && t.date <= p.end).reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0);
-    totalEl.innerHTML = `<span class="muted small">${esc(txCatFilter)} this ${periodWord()} (${shortDate(p.start)} – ${shortDate(p.end)})</span><strong>${money(month, true)}</strong>
+  const word = periodWord();
+  const toggle = matching.length && (txAllDates || txs.length < matching.length)
+    ? `<button type="button" class="link-btn" id="txAllDates" style="display:block;margin:12px auto 4px">${txAllDates
+      ? `Show only this ${word} (${shortDate(p.start)} – ${shortDate(p.end)})`
+      : `Show all dates (${matching.length - txs.length} more outside this ${word})`}</button>` : '';
+  if (txCatFilter !== 'all' && matching.length) {
+    const net = matching.reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0);
+    const inP = matching.filter((t) => t.date >= p.start && t.date <= p.end).reduce((s, t) => s + (t.type === 'income' ? t.amount : -t.amount), 0);
+    totalEl.innerHTML = `<span class="muted small">${esc(txCatFilter)}, ${shortDate(p.start)} – ${shortDate(p.end)}</span><strong>${money(inP, true)}</strong>
       <span class="muted small">All time: ${money(net, true)}</span>`;
     totalEl.classList.remove('hidden');
   } else totalEl.classList.add('hidden');
+  if (!txs.length) {
+    list.innerHTML = (matching.length ? `<div class="empty">Nothing in this ${word}.<br>Use ‹ › above to see other ${word}s.</div>`
+      : `<div class="empty">No transactions yet.<br>Tap the + button to add one.</div>`) + toggle;
+    bindAllDates();
+    return;
+  }
   let html = '';
   let lastDate = '';
   for (const t of txs) {
@@ -282,8 +303,13 @@ function renderTx() {
       ${sub ? `<div class="sub">${t.recurringId ? '🔁 ' : ''}${tripTag(t)}${projectTag(t)}${sub}</div>` : t.recurringId ? '<div class="sub">🔁 Recurring</div>' : tripTag(t) ? `<div class="sub">${tripTag(t)}</div>` : ''}</div>
       <div class="amt ${signed < 0 ? 'neg' : 'pos'}">${money(signed, true)}</div></button>`;
   }
-  list.innerHTML = html;
+  list.innerHTML = html + toggle;
   list.querySelectorAll('[data-tx]').forEach((el) => el.addEventListener('click', () => txSheet(el.dataset.tx)));
+  bindAllDates();
+}
+function bindAllDates() {
+  const b = $('#txAllDates');
+  if (b) b.addEventListener('click', () => { txAllDates = !txAllDates; renderTx(); });
 }
 $('#txFilter').addEventListener('change', (e) => { txFilter = e.target.value; renderTx(); });
 $('#txCatFilter').addEventListener('change', (e) => { txCatFilter = e.target.value; renderTx(); });
@@ -292,13 +318,15 @@ $('#txCatFilter').addEventListener('change', (e) => { txCatFilter = e.target.val
 let piePeriodStart = null; // start date of the period shown; null = the current month / pay cycle
 const PIE_MAX = 5;         // biggest categories shown; the rest go into "Other"
 
+const shownPeriod = () => periodContaining(piePeriodStart || today());
+
 function renderSpendPie() {
   const el = $('#spendPie');
-  if (txCatFilter !== 'all') { el.classList.add('hidden'); return; } // a single category is shown as a total instead
-  el.classList.remove('hidden');
   const current = periodContaining(today());
-  const p = piePeriodStart ? periodContaining(piePeriodStart) : current;
+  const p = shownPeriod();
   const isCurrent = p.start === current.start;
+  // Later periods can be opened when something is logged in them (e.g. planned instalments).
+  const hasLater = state.transactions.some((t) => t.date > p.end);
   // Spending = expenses, not counting card payments or transfers. Follows the account filter.
   // Spending = expenses minus money back in the same category (so it shows what you spent yourself).
   const by = {};
@@ -318,10 +346,13 @@ function renderSpendPie() {
   const rest = all.slice(PIE_MAX);
   if (rest.length) parts.push({ cat: 'Other', v: rest.reduce((s, [, v]) => s + v, 0), color: 'var(--muted)', others: rest.map(([c]) => c) });
 
-  const title = cycleMode() ? (isCurrent ? 'This pay cycle' : 'Pay cycle') : (isCurrent ? 'This month' : 'Month');
+  const later = p.start > current.start;
+  const title = cycleMode() ? (isCurrent ? 'This pay cycle' : later ? 'Upcoming pay cycle' : 'Pay cycle') : (isCurrent ? 'This month' : later ? 'Upcoming month' : 'Month');
   const range = cycleMode() ? `${shortDate(p.start)} – ${shortDate(p.end)}` : monthLabel(p.start.slice(0, 7), true);
   let body;
-  if (!total) {
+  if (txCatFilter !== 'all') {
+    body = ''; // a single category is shown as a total below instead of the chart
+  } else if (!total) {
     body = `<div class="empty" style="padding:18px 10px">No spending logged ${isCurrent ? 'yet in this ' + periodWord() : 'in this ' + periodWord()}.</div>`;
   } else {
     // Donut: one arc per part, with a small gap between slices.
@@ -361,13 +392,14 @@ function renderSpendPie() {
   el.innerHTML = `<div class="pie-head">
       <button class="icon-btn" id="pieprev" aria-label="Previous ${periodWord()}">‹</button>
       <div><div class="title">${title}</div><div class="muted small">${range}${txFilter !== 'all' ? ' · ' + esc(accountName(txFilter)) : ''}</div></div>
-      <button class="icon-btn" id="pienext" aria-label="Next ${periodWord()}" ${isCurrent ? 'disabled' : ''}>›</button>
+      <button class="icon-btn" id="pienext" aria-label="Next ${periodWord()}" ${isCurrent && !hasLater ? 'disabled' : ''}>›</button>
     </div>${body}`;
-  $('#pieprev').addEventListener('click', () => { piePeriodStart = prevPeriod(p).start; renderSpendPie(); });
+  // ‹ › move the chart and the list below it together.
+  $('#pieprev').addEventListener('click', () => { piePeriodStart = prevPeriod(p).start; renderTx(); });
   $('#pienext').addEventListener('click', () => {
     const n = nextPeriod(p);
-    piePeriodStart = n.start >= current.start ? null : n.start;
-    renderSpendPie();
+    piePeriodStart = n.start === current.start ? null : n.start;
+    renderTx();
   });
   // Highlight a slice and its row together; tapping a row filters History to that category.
   const highlight = (i) => el.querySelectorAll('[data-pi]').forEach((x) => x.classList.toggle('dim', i != null && x.dataset.pi !== String(i)));
@@ -394,17 +426,39 @@ function accountSheet(id) {
   const a = state.accounts.find((x) => x.id === id);
   let type = a ? a.type || 'bank' : 'bank';
   const others = bankAccounts().filter((x) => !a || x.id !== a.id);
-  const curSt = a && type === 'credit' ? cardStatementWindow(a, today()) : null;
-  const lastSt = curSt ? cardStatementWindow(a, addDaysISO(curSt.from, -1)) : null;
+  const curWin = a && type === 'credit' ? cardStatementWindow(a, today()) : null;
+  const dueNow = curWin ? cardDueIn(a) : null;
+  const curSt = curWin ? cardStatement(a, curWin) : null;
+  const lastSt = curWin ? cardStatement(a, cardStatementWindow(a, addDaysISO(curWin.from, -1))) : null;
+  // A statement's total, with what it's made of underneath (only the parts that apply).
+  const stmtRows = (st, label, isLast) => {
+    const parts = [];
+    if (st.opening) parts.push(['Owed on ' + shortDate(a.startDate) + ' (amount you entered)', st.opening]);
+    if (st.spent && (st.opening || st.planned || st.recurring || st.paid)) parts.push([isLast || st.to <= today() ? 'Spending' : 'Spent so far', st.spent]);
+    if (st.planned) parts.push(['Planned (dated later)', st.planned]);
+    for (const m of st.missed) parts.push([`🔁 ${esc(m.r.name)}, ${shortDate(m.d)} — not logged <button type="button" class="link-btn small" data-logrec="${m.r.id}|${m.d}|${m.amount}">Log it</button>`, m.amount]);
+    const upcoming = st.recurring - st.missed.reduce((x, m) => x + m.amount, 0);
+    if (upcoming) parts.push(['🔁 Recurring payments still to come', upcoming]);
+    let html = `<div class="kv"><span class="k">${label}</span><span class="v">${money(st.total)}</span></div>`;
+    if (parts.length > 1 || st.paid) html += parts.map(([k, v]) => `<div class="kv sub"><span class="k">${k}</span><span class="v">${money(v)}</span></div>`).join('');
+    if (st.paid) html += `<div class="kv sub"><span class="k">Paid</span><span class="v">−${money(st.paid)}</span></div>
+      <div class="kv sub"><span class="k">Left to pay</span><span class="v">${money(st.left)}</span></div>`;
+    return html;
+  };
   openSheet(a ? (type === 'credit' ? 'Credit card' : 'Edit account') : 'New account', `
     <form class="form" id="accForm">
       ${a ? '' : `<div class="segmented" id="accType">
         <button type="button" data-t="bank">Bank account</button>
         <button type="button" data-t="credit">💳 Credit card</button></div>`}
       ${a && type === 'credit' ? `<div class="card-inset">
-        <div class="kv total"><span class="k">Owed now</span><span class="v">${money(Math.max(0, owed(a.id)))}</span></div>
-        <div class="kv"><span class="k">This statement (${shortDate(curSt.from)} – ${shortDate(curSt.to)})</span><span class="v">${money(cardSpendBetween(a.id, curSt.from, curSt.to))}</span></div>
-        <div class="kv"><span class="k">Last statement (${shortDate(lastSt.from)} – ${shortDate(lastSt.to)}), due ${a.dueDay ? shortDate(lastSt.due) : '—'}</span><span class="v">${money(cardSpendBetween(a.id, lastSt.from, lastSt.to))}</span></div>
+        <div class="kv total"><span class="k">Due this ${periodWord()} (${shortDate(dueNow.period.start)} – ${shortDate(dueNow.period.end)})</span><span class="v">${money(dueNow.amount)}</span></div>
+        ${dueNow.bills.map((x) => `<div class="kv sub"><span class="k">Bill due ${shortDate(x.due)}${x.paid ? `, ${money(x.paid)} paid` : ''}</span><span class="v">${money(x.left)}</span></div>`).join('')}
+        ${dueNow.bills.length ? '' : `<div class="kv sub"><span class="k">${lastSt.left && lastSt.due > dueNow.period.end
+          ? `The bill due ${shortDate(lastSt.due)} (${money(lastSt.left)}) counts from ${shortDate(addDaysISO(dueNow.period.end, 1))}, when the next ${periodWord()} starts.`
+          : `No bill due in this ${periodWord()}.`}</span></div>`}
+        <div class="kv"><span class="k">Owed now (everything on the card)</span><span class="v">${money(Math.max(0, owed(a.id)))}</span></div>
+        ${stmtRows(lastSt, `Last statement (${shortDate(lastSt.from)} – ${shortDate(lastSt.to)}), due ${a.dueDay ? shortDate(lastSt.due) : '—'}`, true)}
+        ${stmtRows(curSt, `This statement (${shortDate(curSt.from)} – ${shortDate(curSt.to)})`, false)}
         ${nextDueDate(a) ? `<div class="kv"><span class="k">Next bill due</span><span class="v">${niceDate(nextDueDate(a))}</span></div>` : ''}
         ${a.limit ? `<div class="kv"><span class="k">Available credit</span><span class="v">${money(a.limit - Math.max(0, owed(a.id)))}</span></div>` : ''}
       </div>
@@ -477,6 +531,12 @@ function accountSheet(id) {
   });
   if (a) {
     if ($('#accPay')) $('#accPay').addEventListener('click', () => payCardSheet(a.id));
+    // Log a recurring payment that's due on this card but wasn't logged (opens Add transaction, filled in).
+    document.querySelectorAll('[data-logrec]').forEach((b) => b.addEventListener('click', () => {
+      const [rid, date, amount] = b.dataset.logrec.split('|');
+      const r = state.recurring.find((x) => x.id === rid);
+      if (r) txSheet(null, { type: 'expense', amount: Number(amount), category: r.category, accountId: a.id, recurringId: r.id, note: r.name, date });
+    }));
     $('#accView').addEventListener('click', () => { txFilter = a.id; closeSheet(); show('tx'); });
     $('#accDel').addEventListener('click', async () => {
       const n = state.transactions.filter((t) => t.accountId === a.id).length;
@@ -502,7 +562,9 @@ function accountSheet(id) {
 function payCardSheet(cardId) {
   const card = accountById(cardId);
   if (!bankAccounts().length) return toast('Add a bank account to pay the card from');
-  transferSheet({ toId: cardId, fromId: card.payFromId, amount: Math.max(0, owed(cardId)) });
+  const cur = cardStatementWindow(card, today());
+  const last = cardStatement(card, cardStatementWindow(card, addDaysISO(cur.from, -1)));
+  transferSheet({ toId: cardId, fromId: card.payFromId, amount: last.left || Math.max(0, owed(cardId)) });
 }
 
 function transferSheet(opts = {}) {
