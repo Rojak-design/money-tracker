@@ -7,7 +7,8 @@
                           sets) or 'other' (time & notes)
      workouts:          { id, date, typeId, type (the type's name), kind, durationMin, notes, source,
                           cardio?:    { distanceKm, timeSec, paceSecPerKm, avgHr },
-                          movements?: [ { name, sets: [ { reps, weightKg } ] } ] }
+                          movements?: [ { name, restSec, sets: [ { reps, weightKg } ] } ] }
+                          restSec: rest between sets of that movement, in seconds (null if not given)
      bodyMeasurements:  { id, date, weightKg, heightCm, bodyFatPct }          one per day
      recoveryDays:      { id, date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, strain, source }  one per day
    Numbers left empty are saved as null. */
@@ -365,11 +366,18 @@ function workoutSheet(id, copyFrom) {
     el.className = 'move';
     el.innerHTML = `<div class="move-head"><input class="mname" list="moveNames" placeholder="Movement, e.g. ${esc((typeOf(type).movements || [])[0] || 'Squat')}" aria-label="Movement" value="${esc(m ? m.name : '')}" autocomplete="off">
         <button type="button" class="x-btn" aria-label="Remove movement">🗑</button></div>
+      <label class="rest-row">Rest between sets <input class="rest" inputmode="numeric" placeholder="e.g. 1:30" aria-label="Rest between sets (min:sec, or seconds)" value="${m && m.restSec ? fmtTime(m.restSec) : ''}" autocomplete="off"></label>
       <div class="set-row set-head"><span>Set</span><span>Reps</span><span>kg</span><span></span></div>
       <div class="sets"></div>
       <button type="button" class="mini-btn add-set">+ Add set</button>`;
     const setsEl = $('.sets', el);
     $('.move-head .x-btn', el).addEventListener('click', () => el.remove());
+    // Picking a movement fills in the rest you used for it last time (if the box is still empty).
+    $('.mname', el).addEventListener('change', () => {
+      const restEl = $('.rest', el);
+      const last = lastRest($('.mname', el).value);
+      if (!restEl.value && last) restEl.value = fmtTime(last);
+    });
     // A new set starts as a copy of the one before, so repeating sets takes one tap.
     $('.add-set', el).addEventListener('click', () => {
       const prev = $$('.set-row', setsEl).pop();
@@ -412,6 +420,8 @@ function workoutSheet(id, copyFrom) {
       const movements = [];
       for (const el of $$('#wMoves .move')) {
         const name = $('.mname', el).value.trim().replace(/\s+/g, ' ');
+        const restSec = parseRest($('.rest', el).value);
+        if (Number.isNaN(restSec) || (restSec != null && restSec > 3600)) return toast(`Type the rest for ${name || 'each movement'} as min:sec (e.g. 1:30) or seconds (e.g. 90)`);
         const sets = [];
         for (const r of $$('.sets .set-row', el)) {
           const reps = num($('.reps', r).value), kg = num($('.kg', r).value);
@@ -423,7 +433,7 @@ function workoutSheet(id, copyFrom) {
         if (!name && !sets.length) continue;
         if (!name) return toast('Give each movement a name');
         if (!sets.length) return toast(`Add at least one set for ${name}`);
-        movements.push({ name: matchName(name, t), sets });
+        movements.push({ name: matchName(name, t), restSec, sets });
       }
       w.movements = movements;
       // New movements are added to this type's list.
@@ -448,6 +458,23 @@ function workoutSheet(id, copyFrom) {
       toast('Workout deleted');
     });
   }
+}
+// Rest between sets: "1:30" (min:sec), "90" or "90s" (seconds), "2m" / "2 min" (minutes).
+function parseRest(v) {
+  const s = String(v ?? '').trim().toLowerCase();
+  if (!s) return null;
+  if (/^\d+:\d{1,2}$/.test(s)) return parseTime(s);
+  let m = s.match(/^(\d+(?:[.,]\d+)?)\s*(s|sec|secs|seconds?)?$/);
+  if (m) return Math.round(num(m[1]));
+  m = s.match(/^(\d+(?:[.,]\d+)?)\s*(m|min|mins|minutes?)$/);
+  if (m) return Math.round(num(m[1]) * 60);
+  return NaN;
+}
+// The rest you used for a movement the last time you logged it.
+function lastRest(name) {
+  const ws = state.workouts.filter((w) => w.movements).sort(byDateDesc);
+  for (const w of ws) for (const m of w.movements) if (sameName(m.name, name) && m.restSec) return m.restSec;
+  return null;
 }
 // A distance as typed in the form: metres for swims, km otherwise (no thousands separators).
 const showDistFor = (km, t) => (t.pace === '100m' ? String(Math.round(km * 1000)) : String(round(km, 2)));
