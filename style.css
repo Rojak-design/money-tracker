@@ -150,7 +150,7 @@ select { appearance: none; -webkit-appearance: none;
 
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 7;
-  display: grid; grid-template-columns: repeat(6, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   background: var(--card); border-top: 1px solid var(--line);
   padding-bottom: var(--safe-b); height: calc(var(--tabbar-h) + var(--safe-b));
 }
@@ -346,20 +346,3 @@ label.check input { width: 22px; height: 22px; flex: none; }
 .cost-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
 .mini-btn { border: 1px solid var(--line); background: var(--card); color: var(--primary); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 a.btn { text-decoration: none; box-sizing: border-box; }
-
-/* ---------- Rojak home screen ---------- */
-.home-date { margin: 0 0 6px; }
-.home-module { margin-bottom: 8px; }
-.home-head { display: flex; align-items: baseline; justify-content: space-between; margin: 14px 0 10px; }
-.home-head h2 { margin: 0; font-size: 20px; }
-.home-tile { border: 0; text-align: left; display: flex; flex-direction: column; justify-content: flex-start; font: inherit; color: var(--text); cursor: pointer; min-width: 0; }
-.home-tile .value { overflow-wrap: anywhere; }
-.shortcuts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
-.shortcut {
-  border: 0; border-radius: 12px; padding: 12px 6px; font: inherit; font-size: 13px; font-weight: 600;
-  background: var(--primary-soft); color: var(--primary); cursor: pointer;
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-}
-.shortcut span { font-size: 20px; }
-.home-backup h2 { margin: 0; }
-.tabbar button { font-size: 11px; min-width: 0; }

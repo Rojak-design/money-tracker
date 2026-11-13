@@ -1,10 +1,38 @@
-/* Rojak · Money module (the money tracker) — all data is stored on this device in the shared Rojak store. */
+/* Money Tracker — all data is stored on this device (IndexedDB). */
 'use strict';
 
-/* ---------- Storage ----------
-   The IndexedDB helpers (dbGet, dbSet, dbDel, dbClear, dbKeys) now live in core/store.js — the one data store
-   shared by every Rojak module. The money tracker keeps its data under the same 'state' key as before, so
-   everything saved by earlier versions loads unchanged. */
+/* ---------- Storage (IndexedDB) ---------- */
+const DB_NAME = 'money-tracker';
+const STORE = 'kv';
+let dbPromise;
+
+function openDB() {
+  if (!dbPromise) {
+    dbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(STORE);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  return dbPromise;
+}
+async function dbDo(mode, fn) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, mode);
+    const store = tx.objectStore(STORE);
+    const req = fn(store);
+    tx.oncomplete = () => resolve(req && req.result);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+}
+const dbGet = (key) => dbDo('readonly', (s) => s.get(key));
+const dbSet = (key, val) => dbDo('readwrite', (s) => s.put(val, key));
+const dbDel = (key) => dbDo('readwrite', (s) => s.delete(key));
+const dbClear = () => dbDo('readwrite', (s) => s.clear());
+const dbKeys = () => dbDo('readonly', (s) => s.getAllKeys());
 
 /* ---------- State ---------- */
 // Amounts are stored as whole cents (integers) to avoid rounding errors.
@@ -55,14 +83,12 @@ function migrate() {
 }
 
 async function load() {
-  const saved = await Rojak.load('money');
+  const saved = await dbGet('state');
   if (saved) state = Object.assign(emptyState(), saved);
   migrate();
-  if (saved) await save(); // dates entries saved before Rojak (savedAt / updatedAt); nothing else changes
 }
-// Saved through the shared store, which also dates every entry (savedAt / updatedAt).
 function save() {
-  return Rojak.save('money', state).catch((err) => {
+  return dbSet('state', state).catch((err) => {
     console.error(err);
     toast('Could not save! Storage may be full.');
   });
@@ -133,8 +159,8 @@ function toast(msg) {
 }
 
 /* ---------- Navigation ---------- */
-const TITLES = { home: 'Rojak', accounts: 'Accounts', tx: 'History', recon: 'Reconcile', plan: 'Plan', backup: 'Backup' };
-let currentView = 'home';
+const TITLES = { accounts: 'Accounts', tx: 'History', recon: 'Reconcile', plan: 'Plan', backup: 'Backup' };
+let currentView = 'accounts';
 function show(view) {
   currentView = view;
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + view));
@@ -147,7 +173,7 @@ function show(view) {
 document.querySelectorAll('.tabbar button').forEach((b) => b.addEventListener('click', () => show(b.dataset.view)));
 
 function updateFab() {
-  const hide = currentView === 'home' || currentView === 'backup' || currentView === 'recon' || (currentView === 'plan' && planTab === 'forecast');
+  const hide = currentView === 'backup' || currentView === 'recon' || (currentView === 'plan' && planTab === 'forecast');
   $('#fab').classList.toggle('hidden', hide);
 }
 
@@ -173,7 +199,6 @@ function render() {
   if (typeof renderPlan === 'function') renderPlan();
   $('#currencyInput').value = state.settings.currency || '';
   renderPaySettings();
-  if (typeof renderHome === 'function') renderHome();
 }
 
 function renderAccounts() {
@@ -1097,32 +1122,57 @@ async function reconSheet(id) {
   });
 }
 
-/* ---------- Backup: export / import ----------
-   One backup file for all of Rojak (core/store.js). Older Money Tracker backups can still be imported. */
-async function exportBackup() {
-  try {
-    const how = await Rojak.exportBackup();
-    if (how === 'downloaded') toast('Backup downloaded');
-    if (how !== 'cancelled') render();
-  } catch (err) {
-    console.error(err);
-    toast('Could not make the backup');
+/* ---------- Backup: export / import ---------- */
+$('#exportBtn').addEventListener('click', async () => {
+  const images = {};
+  for (const r of state.reconciliations) {
+    if (r.hasImage) { const d = await dbGet('img:' + r.id); if (d) images[r.id] = d; }
   }
-}
-$('#exportBtn').addEventListener('click', exportBackup);
+  const backup = { app: 'money-tracker', version: 2, exportedAt: new Date().toISOString(), state, images };
+  const name = `money-backup-${today()}.json`;
+  const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
+  const file = new File([blob], name, { type: 'application/json' });
 
-async function importBackup(e) {
+  // On phones, the share sheet lets you save to Files / Drive or send by email.
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: 'Money Tracker backup' });
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  toast('Backup downloaded');
+});
+
+$('#importFile').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
   try {
-    if (await Rojak.importFile(file)) toast('Backup imported');
+    const data = JSON.parse(await file.text());
+    if (data.app !== 'money-tracker' || !data.state || !Array.isArray(data.state.accounts)) throw new Error('bad file');
+    const s = data.state;
+    const summary = `${s.accounts.length} account(s), ${(s.transactions || []).length} transaction(s)`;
+    if (!confirm(`Import backup from ${data.exportedAt ? new Date(data.exportedAt).toLocaleString() : 'unknown date'}?\n\n${summary}\n\nThis REPLACES all data currently in the app.`)) return;
+    await dbClear();
+    state = Object.assign(emptyState(), s);
+    migrate();
+    await save();
+    for (const [id, img] of Object.entries(data.images || {})) await dbSet('img:' + id, img);
+    txFilter = 'all'; txCatFilter = 'all';
+    render();
+    toast('Backup imported');
   } catch (err) {
     console.error(err);
-    toast('That file is not a valid Rojak or Money Tracker backup');
+    toast('That file is not a valid Money Tracker backup');
   }
-}
-$('#importFile').addEventListener('change', importBackup);
+});
 
 const paydayOptions = (withNone) => (withNone ? `<option value="0">Not set — use calendar months</option>` : '') +
   Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${ordinal(i + 1)} of the month</option>`).join('') +
@@ -1217,7 +1267,10 @@ $('#currencyInput').addEventListener('change', async (e) => {
 $('#wipeBtn').addEventListener('click', async () => {
   if (!confirm('Delete ALL accounts, transactions and screenshots from this phone?')) return;
   if (!confirm('Are you really sure? Export a backup first if you might need it.')) return;
-  await Rojak.wipe();
+  await dbClear();
+  state = emptyState();
+  migrate();
+  await save();
   render();
   toast('All data deleted');
 });

@@ -1,17 +1,14 @@
 // Service worker: lets the app open with no internet connection.
 // When you change any app file, bump this version number AND the ?v= numbers in index.html
 // so phones get the update with all files matching.
-const VERSION = 25;
-const CACHE = 'rojak-v' + VERSION;
+const VERSION = 24;
+const CACHE = 'money-tracker-v' + VERSION;
 const FILES = [
   './',
   './index.html',
   './style.css?v=' + VERSION,
-  './core/store.js?v=' + VERSION,
-  './modules/money/app.js?v=' + VERSION,
-  './modules/money/plan.js?v=' + VERSION,
-  './modules/money/module.js?v=' + VERSION,
-  './core/home.js?v=' + VERSION,
+  './app.js?v=' + VERSION,
+  './plan.js?v=' + VERSION,
   './manifest.json',
   './icon-v2.svg',
   './icon-v2-192.png',
