@@ -132,7 +132,7 @@ function toast(msg) {
 }
 
 /* ---------- Navigation ---------- */
-const TITLES = { accounts: 'Accounts', tx: 'History', recon: 'Reconcile', plan: 'Plan', backup: 'Backup' };
+const TITLES = { accounts: 'Accounts', tx: 'History', recon: 'Reconcile', plan: 'Plan', backup: 'Settings' };
 let currentView = 'accounts';
 function show(view) {
   currentView = view;
@@ -878,7 +878,7 @@ function txSheet(id, prefill) {
 }
 
 /* ---------- Reconciliation ---------- */
-let reconImageData = null; // compressed data URL of the chosen screenshot
+let reconImageData = null; // compressed data URL of the chosen screenshot (shown while filling in the form, not saved)
 
 function renderRecon() {
   const sel = $('#reconAccount');
@@ -1067,11 +1067,10 @@ $('#reconForm').addEventListener('submit', async (e) => {
   const rec = {
     id: uid(), accountId, date, bank,
     app: balance(accountId, date),
-    hasImage: !!reconImageData,
+    hasImage: false, // screenshots are read for the balance, not kept
     note: $('#reconNote').value.trim(),
     adjusted: false
   };
-  if (reconImageData) await dbSet('img:' + rec.id, reconImageData);
   state.reconciliations.push(rec);
   await save();
   // reset form (keep account + date)
@@ -1157,57 +1156,7 @@ async function reconSheet(id) {
   });
 }
 
-/* ---------- Backup: export / import ---------- */
-$('#exportBtn').addEventListener('click', async () => {
-  const images = {};
-  for (const r of state.reconciliations) {
-    if (r.hasImage) { const d = await dbGet('img:' + r.id); if (d) images[r.id] = d; }
-  }
-  const backup = { app: 'money-tracker', version: 2, exportedAt: new Date().toISOString(), state, images };
-  const name = `money-backup-${today()}.json`;
-  const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
-  const file = new File([blob], name, { type: 'application/json' });
-
-  // On phones, the share sheet lets you save to Files / Drive or send by email.
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file], title: 'Money Tracker backup' });
-      return;
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-    }
-  }
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = name;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-  toast('Backup downloaded');
-});
-
-$('#importFile').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  e.target.value = '';
-  if (!file) return;
-  try {
-    const data = JSON.parse(await file.text());
-    if (data.app !== 'money-tracker' || !data.state || !Array.isArray(data.state.accounts)) throw new Error('bad file');
-    const s = data.state;
-    const summary = `${s.accounts.length} account(s), ${(s.transactions || []).length} transaction(s)`;
-    if (!confirm(`Import backup from ${data.exportedAt ? new Date(data.exportedAt).toLocaleString() : 'unknown date'}?\n\n${summary}\n\nThis REPLACES all data currently in the app.`)) return;
-    await dbClear();
-    state = Object.assign(emptyState(), s);
-    migrate();
-    await save();
-    for (const [id, img] of Object.entries(data.images || {})) await dbSet('img:' + id, img);
-    txFilter = 'all'; txCatFilter = 'all';
-    render();
-    toast('Backup imported');
-  } catch (err) {
-    console.error(err);
-    toast('That file is not a valid Money Tracker backup');
-  }
-});
+/* Backup, restore and deleting all data are done for the whole app on the Rojak home screen (core/home.js). */
 
 const paydayOptions = (withNone) => (withNone ? `<option value="0">Not set — use calendar months</option>` : '') +
   Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${ordinal(i + 1)} of the month</option>`).join('') +
@@ -1297,17 +1246,6 @@ $('#currencyInput').addEventListener('change', async (e) => {
   await save();
   render();
   toast('Currency saved');
-});
-
-$('#wipeBtn').addEventListener('click', async () => {
-  if (!confirm('Delete ALL accounts, transactions and screenshots from this phone?')) return;
-  if (!confirm('Are you really sure? Export a backup first if you might need it.')) return;
-  await dbClear();
-  state = emptyState();
-  migrate();
-  await save();
-  render();
-  toast('All data deleted');
 });
 
 /* ---------- Filling a transaction from a screenshot (receipt, payment confirmation, ride…) ----------

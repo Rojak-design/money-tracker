@@ -1,4 +1,5 @@
-/* Rojak home screen. It only reads the money tracker's data (to show the summary); it never changes it. */
+/* Rojak home screen. It reads each module's data to show its summary, and does backup, restore and delete for
+   the whole app (every module at once). */
 'use strict';
 
 const $ = (sel) => document.querySelector(sel);
@@ -68,12 +69,43 @@ function renderMoney(s) {
       <div class="sub">${hasCards ? (s.cardsDue && t <= s.cardsDue.until ? 'bank accounts − card bills due now' : 'bank accounts − card bills') : `${s.accounts.length} account${s.accounts.length > 1 ? 's' : ''}`}</div></div>`;
 }
 
+/* ----- Backup, restore and delete, for the whole app ----- */
+const niceWhen = (iso) => {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 864e5);
+  const ago = days <= 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
+  return `${ago} (${new Date(iso).toLocaleDateString()})`;
+};
 async function renderBackupInfo() {
   const last = await Rojak.lastBackupAt();
-  if (!last) return;
-  const days = Math.floor((Date.now() - new Date(last).getTime()) / 864e5);
-  const ago = days <= 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
-  $('#backupInfo').textContent = `Last backup ${ago} (${new Date(last).toLocaleDateString()}). Everything in Rojak is saved only on this phone. Keep a backup file somewhere safe.`;
+  $('#backupInfo').textContent = (last ? `Last backup ${niceWhen(last)}. ` : 'No backup made yet. ') +
+    'Everything in Rojak is saved only on this phone. Keep a backup file somewhere safe.';
+  const u = await Rojak.undoInfo();
+  $('#undoBox').classList.toggle('hidden', !u);
+  if (u) {
+    $('#undoInfo').textContent = `Your data as it was just before the ${u.what === 'delete' ? 'delete' : 'restore'} ${niceWhen(u.at)} is kept on this phone.`;
+    $('#undoBtn').textContent = u.what === 'delete' ? 'Undo delete' : 'Undo restore';
+  }
+  const shots = await Rojak.screenshotsInfo();
+  $('#shotsBox').classList.toggle('hidden', !shots.count);
+  if (shots.count) {
+    $('#shotsInfo').textContent = `${shots.count} bank screenshot${shots.count > 1 ? 's' : ''} saved by earlier versions of Money (about ${(shots.bytes / 1024 / 1024).toFixed(1)} MB). ` +
+      'Screenshots are no longer kept or backed up; these stay on this phone until you delete them.';
+  }
+  if (navigator.storage && navigator.storage.estimate) {
+    try {
+      const { usage } = await navigator.storage.estimate();
+      $('#storageInfo').textContent = `Rojak uses about ${(usage / 1024 / 1024).toFixed(1)} MB on this phone.`;
+    } catch { /* ignore */ }
+  }
+}
+async function refresh() {
+  try {
+    renderMoney(await Rojak.load('money'));
+    await renderBackupInfo();
+  } catch (err) {
+    console.error(err);
+    $('#moneySummary').innerHTML = `<div class="muted small">Could not open storage on this browser.</div>`;
+  }
 }
 
 $('#exportBtn').addEventListener('click', async () => {
@@ -84,6 +116,88 @@ $('#exportBtn').addEventListener('click', async () => {
   } catch (err) {
     console.error(err);
     toast('Could not make the backup');
+  }
+});
+
+function openSheet(html) {
+  $('#sheetBody').innerHTML = html;
+  $('#sheet').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+}
+function closeSheet() {
+  $('#sheet').classList.add('hidden');
+  document.body.style.overflow = '';
+}
+$('#sheet').addEventListener('click', (e) => { if (e.target.closest('[data-close]')) closeSheet(); });
+
+// Restore: shows what's in the file and on this phone, and lets you choose which modules to bring back.
+$('#restoreFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  let backup;
+  try { backup = Rojak.readBackup(await file.text()); } catch (err) {
+    console.error(err);
+    return toast('That file is not a Rojak backup');
+  }
+  const now = await Rojak.allModules();
+  const ids = Object.keys(backup.modules).filter((id) => backup.modules[id] != null);
+  if (!ids.length) return toast('That backup is empty');
+  openSheet(`
+    <p class="muted small" style="margin-top:0">Backup made ${backup.exportedAt ? esc(new Date(backup.exportedAt).toLocaleString()) : 'on an unknown date'}. Choose what to bring back:</p>
+    ${ids.map((id) => `<label class="pick"><input type="checkbox" data-id="${esc(id)}" checked>
+      <span><strong>${esc(Rojak.nameOf(id))}</strong>
+      <span class="small">In the backup: ${esc(Rojak.describe(backup.modules[id]))}</span><br>
+      <span class="small muted">On this phone now: ${esc(Rojak.describe(now[id]))}</span></span></label>`).join('')}
+    <div class="warn">Each module you tick is <strong>replaced</strong> by the backup. Modules you don't tick stay as they are. You can undo this afterwards.</div>
+    <button class="btn" id="restoreGo">Restore</button>
+    <button class="btn secondary" data-close>Cancel</button>`);
+  $('#restoreGo').addEventListener('click', async () => {
+    const pick = [...document.querySelectorAll('#sheetBody input[data-id]:checked')].map((x) => x.dataset.id);
+    if (!pick.length) return toast('Tick at least one module');
+    try {
+      await Rojak.restore(backup, pick);
+      closeSheet();
+      await refresh();
+      toast(`Restored ${pick.map(Rojak.nameOf).join(' and ')}`);
+    } catch (err) {
+      console.error(err);
+      toast('Could not restore the backup');
+    }
+  });
+});
+
+$('#undoBtn').addEventListener('click', async () => {
+  const u = await Rojak.undoInfo();
+  if (!u) return;
+  if (!confirm(`Put everything back as it was just before the ${u.what}? Changes made since then will be lost.`)) return;
+  try {
+    await Rojak.undo();
+    await refresh();
+    toast('Done — your data is back as it was');
+  } catch (err) {
+    console.error(err);
+    toast('Could not undo');
+  }
+});
+
+$('#shotsBtn').addEventListener('click', async () => {
+  if (!confirm('Delete the bank screenshots saved on this phone? Your reconciliations and their numbers stay. This cannot be undone.')) return;
+  const n = await Rojak.deleteScreenshots();
+  await refresh();
+  toast(`${n} screenshot${n === 1 ? '' : 's'} deleted`);
+});
+
+$('#wipeBtn').addEventListener('click', async () => {
+  if (!confirm('Delete ALL your data in Rojak (Money, Fitness and every other module) from this phone?')) return;
+  if (!confirm('Are you really sure? Export a backup first if you might need it.')) return;
+  try {
+    await Rojak.deleteAll();
+    await refresh();
+    toast('All data deleted. You can still undo it from here.');
+  } catch (err) {
+    console.error(err);
+    toast('Could not delete the data');
   }
 });
 
@@ -144,13 +258,7 @@ async function init() {
   $('#today').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
   $('#hairNote').textContent = `This month: ${hair.name} hair and a ${cat.name} cat. They change every month.`;
   setTimeout(hello, 350);
-  try {
-    renderMoney(await Rojak.load('money'));
-    await renderBackupInfo();
-  } catch (err) {
-    console.error(err);
-    $('#moneySummary').innerHTML = `<div class="muted small">Could not open storage on this browser.</div>`;
-  }
+  await refresh();
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 }

@@ -355,3 +355,6 @@ a.btn { text-decoration: none; box-sizing: border-box; }
 
 /* Link back to the Rojak home screen */
 .back-home { display: inline-block; color: var(--primary); font-weight: 600; text-decoration: none; font-size: 15px; margin-bottom: 2px; }
+
+.backup-link { color: inherit; text-decoration: none; }
+.backup-link strong { color: var(--primary); }

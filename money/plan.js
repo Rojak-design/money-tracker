@@ -818,7 +818,7 @@ function renderForecast() {
   const rule = currentPayRule();
   const cycleNote = cycleMode()
     ? `Each bar is one pay cycle (payday ${payRuleText(rule)} up to the day before the next payday), labelled by the month most of it falls in.${paydayRules().length > 1 ? ' Past cycles use the payday you had at the time.' : ''}`
-    : 'Each bar is a calendar month. Set your payday under Backup → Settings to see pay cycles instead.';
+    : 'Each bar is a calendar month. Set your payday under Settings to see pay cycles instead.';
 
   const view = state.settings.fcView || 'spending';
   let html = `
