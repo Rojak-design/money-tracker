@@ -69,6 +69,7 @@ main { padding: 0 16px; max-width: 640px; margin: 0 auto; }
 
 .soon-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
 .soon-grid .card { margin: 0; }
+.soon-grid .wide { grid-column: 1 / -1; }
 .soon { border: 1.5px dashed var(--line); box-shadow: none; background: transparent; }
 .soon h2 { font-size: 16px; margin: 6px 0 2px; color: var(--muted); }
 .soon .module-icon { filter: grayscale(.6); opacity: .7; }
@@ -105,3 +106,10 @@ main { padding: 0 16px; max-width: 640px; margin: 0 auto; }
   position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 24px); transform: translateX(-50%);
   background: #1f2933; color: #fff; padding: 10px 16px; border-radius: 20px; font-size: 14px; z-index: 30;
 }
+
+/* Fitness card: coral, like the Fitness module */
+.module-card.fitness { --accent: #c2410c; --accent-soft: #fdebe1; }
+@media (prefers-color-scheme: dark) { .module-card.fitness { --accent: #fb923c; --accent-soft: #3b2114; } }
+.module-card.fitness .open { color: var(--accent); }
+.module-card.fitness .stat { background: var(--accent-soft); }
+.module-card.fitness .stat .value small { font-size: 14px; font-weight: 600; color: var(--muted); margin-left: 2px; }

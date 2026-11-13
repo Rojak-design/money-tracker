@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Fitness · Rojak</title>
+  <meta name="description" content="Log workouts, body measurements and recovery. Data stays on your phone.">
+  <meta name="theme-color" content="#c2410c">
+  <link rel="manifest" href="../manifest.json">
+  <link rel="icon" href="../rojak-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="../rojak-apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Fitness">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <!-- When app files change, bump ?v= here, in index.html, money/index.html and the version in sw.js (keep them all the same). -->
+  <link rel="stylesheet" href="style.css?v=35">
+</head>
+<body>
+  <header class="topbar">
+    <a href="../" class="back-home">‹ Rojak</a>
+    <h1 id="viewTitle">Workouts</h1>
+  </header>
+
+  <main>
+    <!-- WORKOUTS: every workout, newest first -->
+    <section id="view-workouts" class="view active">
+      <div class="view-head"><button type="button" class="link-btn" id="typesBtn">Workout types ›</button></div>
+      <div id="workoutList" class="list"></div>
+    </section>
+
+    <!-- BODY: body weight, height, body fat -->
+    <section id="view-body" class="view">
+      <div id="bodyLatest"></div>
+      <div id="bodyList" class="list"></div>
+    </section>
+
+    <!-- RECOVERY: recovery score, HRV, resting heart rate, sleep, strain -->
+    <section id="view-recovery" class="view">
+      <div id="recoveryLatest"></div>
+      <div id="recoveryList" class="list"></div>
+    </section>
+  </main>
+
+  <button id="fab" class="fab" aria-label="Add workout">+</button>
+
+  <nav class="tabbar">
+    <button data-view="workouts" class="active"><span>🏋️</span>Workouts</button>
+    <button data-view="body"><span>⚖️</span>Body</button>
+    <button data-view="recovery"><span>🔋</span>Recovery</button>
+  </nav>
+
+  <!-- Bottom sheet for forms -->
+  <div id="sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-backdrop" data-close></div>
+    <div class="sheet-panel">
+      <div class="sheet-head">
+        <h2 id="sheetTitle"></h2>
+        <button class="icon-btn" data-close aria-label="Close">✕</button>
+      </div>
+      <div id="sheetBody"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="../core/store.js?v=35"></script>
+  <script src="app.js?v=35"></script>
+</body>
+</html>
