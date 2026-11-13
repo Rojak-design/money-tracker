@@ -297,6 +297,11 @@ async function init() {
   await refresh();
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  // When a new version of the app arrives, reload to use it (unless the restore sheet is open).
+  if ('serviceWorker' in navigator && navigator.serviceWorker.controller && !init.watching) {
+    init.watching = true;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if ($('#sheet').classList.contains('hidden')) location.reload(); });
+  }
 }
 init();
 // Coming back to the home screen (e.g. from the money tracker) shows fresh numbers.
