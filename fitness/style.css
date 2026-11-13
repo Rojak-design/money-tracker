@@ -87,7 +87,13 @@ main { padding: 0 16px; max-width: 640px; margin: 0 auto; }
 .tile .label { font-size: 12px; color: var(--muted); }
 .tile .value { font-size: 20px; font-weight: 700; margin-top: 2px; white-space: nowrap; }
 .tile .value small { font-size: 13px; font-weight: 600; color: var(--muted); margin-left: 2px; }
-@media (max-width: 360px) { .tiles { grid-template-columns: 1fr 1fr; } }
+/* A tile left on its own in the last row fills the row. */
+.tiles .tile:last-child:nth-child(3n+1) { grid-column: 1 / -1; }
+@media (max-width: 360px) {
+  .tiles { grid-template-columns: 1fr 1fr; }
+  .tiles .tile:last-child:nth-child(3n+1) { grid-column: auto; }
+  .tiles .tile:last-child:nth-child(2n+1) { grid-column: 1 / -1; }
+}
 
 /* Forms */
 .form { display: flex; flex-direction: column; gap: 14px; }
@@ -213,3 +219,18 @@ label.check input { width: 22px; height: 22px; flex: none; accent-color: var(--p
 .int-head { font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 0; }
 .int-head span { text-align: center; }
 .box h3 .hint { font-weight: 400; margin-left: 4px; }
+
+/* Screenshot import */
+.view-head { gap: 10px; }
+.view-head .import-btn { margin-right: auto; }
+.import-banner { background: var(--primary-soft); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; font-size: 14px; line-height: 1.4; }
+.import-banner strong { color: var(--primary); }
+.shots { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.shots img { height: 120px; border-radius: 8px; border: 1px solid var(--line); flex: none; cursor: zoom-in; background: var(--card); }
+.shot-big { width: 100%; border-radius: 10px; border: 1px solid var(--line); cursor: zoom-out; }
+.import-banner .mini-btn { align-self: flex-start; }
+.from { font-size: 12px; font-weight: 500; color: var(--primary); }
+label.imported input { border-color: var(--primary); }
+.progress { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.progress > div { height: 100%; width: 0; background: var(--primary); border-radius: 4px; transition: width .2s; }
+.pick-list { display: flex; flex-direction: column; gap: 8px; }

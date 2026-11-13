@@ -49,12 +49,20 @@ Coral-coloured, so it's easy to tell apart from Money. Three tabs:
   - **Distance & pace**: distance, time, pace and average heart rate (the time is the workout's duration, so there's no separate duration box). Fill in any two of distance, time and pace and the third is worked out. Times, paces and rests can be typed with a dot or comma instead of ":" (phone number keypads often have no ":"): `28.36` = 28:36, `1.02.30` = 1:02:30; each box shows how it was read when you leave it. Optional **intervals**: one row per rep with its distance (metres; km for types shown in km/h), time, pace and the rest after it; **+ Add rep** copies the rep before. Shown in the list as e.g. "6 × 800 m". If no total distance, time or pace is typed, the reps' distance is used as the total distance. Each type shows pace as min:sec per km, km/h, or min:sec per 100 m with the distance in metres (as for swimming).
   - **Movements & sets**: add movements (that type's movements are suggested first, or type a new one and it's added to the type's list), each with sets of reps and weight in kg (weight can be left empty) and the rest between sets (type `1:30`, `90` seconds or `2m`; filled in with the rest you used for that movement last time). **+ Add set** copies the set before it.
 - **Body** – body weight, height and (optionally) body fat %, one entry per day. Shows the latest weight and the change since the entry before, BMI and body fat.
-- **Recovery** – recovery score, HRV, resting heart rate, sleep (h:mm or hours), sleep score and strain, one entry per day. The recovery score is green (67%+), yellow (34–66%) or red, as in Whoop.
+- **Recovery** – recovery score, HRV, resting heart rate, sleep (h:mm or hours), sleep score, strain and Body Battery (Garmin), one entry per day. The recovery score is green (67%+), yellow (34–66%) or red, as in Whoop.
+
+**📷 Import screenshots** (top of Workouts and Recovery): pick one or more screenshots (a Garmin activity that needs scrolling can be several); they're read on the phone with the same bundled reader as Money (`money/ocr`) and never saved. What they show opens in the usual form, with the screenshots above it (tap one to see it bigger) and notes on what was read — check it and tap Save. Workout and recovery screenshots picked together open one after the other.
+- **Garmin Connect** activity **Intervals / Laps** tab: reps with time, distance and pace, rests, and the totals (warm-up and cool-down count in the totals). Workouts with a warm-up, rests or repeated short reps get the reps as intervals; laps of a steady run are only in the totals, with a button to add them as intervals.
+- **Garmin Connect Strength Training** exercise list: every set with its movement, reps and kg ("Body" = no weight). Rename a movement before saving and that name is used next time (kept in `importAliases`).
+- **WodUp** posted workout: its movements with reps and sets (e.g. "5 alternating sets of 8 Back Squats" → Back squat, 5 sets of 8), weights left for you to fill in, and the workout text as notes.
+- **Whoop** recovery page: recovery %, HRV, resting heart rate, sleep performance (and strain / hours of sleep where shown).
+- **Garmin** At a Glance (and HRV / sleep pages): resting heart rate, HRV (At a Glance shows the 7-day average — it doesn't replace Whoop's last-night HRV), Body Battery, sleep score.
+Numbers read go over that day's recovery entry (the others stay); if two screenshots give different numbers for the same thing, the first is used and the other is shown under it. Each number read is marked with where it came from (`sources`). Garmin's activity screens don't show the date, so check it.
 
 Saved in the shared store under `mod:fitness`, every entry with its own `date` (YYYY-MM-DD), so other modules (e.g. a habit tracker) can read it:
 `workoutTypes` (`{id, name, icon, kind: cardio|strength|other, pace, movements: [names], hidden}`, in the order shown),
 `workouts` (`{date, typeId, type (the type's name), kind, durationMin, notes, cardio: {distanceKm, timeSec, paceSecPerKm, avgHr, intervals: [{distanceKm, timeSec, paceSecPerKm, restSec}]}, movements: [{name, restSec, sets: [{reps, weightKg}]}]}`),
-`bodyMeasurements` (`{date, weightKg, heightCm, bodyFatPct}`), `recoveryDays` (`{date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, strain}`). Empty numbers are saved as `null`.
+`bodyMeasurements` (`{date, weightKg, heightCm, bodyFatPct}`), `recoveryDays` (`{date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, strain, bodyBattery, sources}`). Empty numbers are saved as `null`.
 
 ## Publish with GitHub Pages
 1. On GitHub, open this repository → **Settings** → **Pages**.
@@ -78,8 +86,8 @@ On iPhone, the home-screen app and Safari keep separate data — use the home-sc
 - `core/avatar.js` – her drawing, its monthly hair colours and her waving hand
 - `core/cat.js` – the cat and its monthly breeds
 - `money/` – the money tracker: `index.html`, `style.css`, `app.js` (accounts, transactions, categories, reconciliation, settings), `plan.js` (recurring payments, savings projects, trips and the forecast)
-- `fitness/` – the fitness module: `index.html`, `style.css`, `app.js` (workouts and workout types, body measurements, recovery)
-- `money/ocr/` – Tesseract.js (Apache 2.0, licences included) for reading balances from screenshots; loaded only when you pick a screenshot
+- `fitness/` – the fitness module: `index.html`, `style.css`, `app.js` (workouts and workout types, body measurements, recovery), `import.js` (reading screenshots)
+- `money/ocr/` – Tesseract.js (Apache 2.0, licences included) for reading screenshots (Money balances and receipts, Fitness imports); loaded only when you pick a screenshot
 - `manifest.json`, `sw.js`, `rojak-icon*`, `rojak-apple-touch-icon.png` – make it installable and work offline (`icon-v2.svg`, `apple-touch-icon-v2.png` are the money tracker's own tab icon)
 
 When you change any file, bump `VERSION` in `sw.js` and the matching `?v=` numbers in `index.html`, `money/index.html` and `fitness/index.html` (keep them all the same) so phones pick up the update with all files matching.
