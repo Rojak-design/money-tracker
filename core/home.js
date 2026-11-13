@@ -87,12 +87,63 @@ $('#exportBtn').addEventListener('click', async () => {
   }
 });
 
+/* ----- She waves and the cat swishes its tail ----- */
+const reduceMotion = () => window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+const easeOut = (x) => 1 - (1 - x) * (1 - x);
+const anims = {};
+// Runs step(t) every frame for `ms` milliseconds (t from 0 to 1); a new run of the same name replaces the old one.
+function animate(name, ms, step) {
+  cancelAnimationFrame(anims[name]);
+  const start = performance.now();
+  const frame = (now) => {
+    const t = Math.min(1, (now - start) / ms);
+    step(t * ms);
+    if (t < 1) anims[name] = requestAnimationFrame(frame);
+  };
+  anims[name] = requestAnimationFrame(frame);
+}
+// Hand peeks up beside her shoulder (the elbow stays below the card edge), waves twice, goes down; then she blinks.
+function wave() {
+  if (reduceMotion()) return;
+  const svg = $('#avatar svg');
+  if (!svg) return;
+  const lift = svg.querySelector('.arm-lift'), rock = svg.querySelector('.arm-wave');
+  const open = svg.querySelector('.eyes-open'), shut = svg.querySelector('.eyes-shut');
+  animate('wave', 1800, (ms) => {
+    // How far up the hand is: 0 = hidden below the edge, 1 = up beside her shoulder.
+    const up = ms < 250 ? easeOut(ms / 250) : ms < 1250 ? 1 : ms < 1500 ? 1 - easeOut((ms - 1250) / 250) : 0;
+    const deg = ms >= 250 && ms < 1250 ? -12 * Math.sin(((ms - 250) / 500) * 2 * Math.PI) : 0;
+    lift.setAttribute('transform', `translate(0 ${13 + (1 - up) * 32})`);
+    rock.setAttribute('transform', `rotate(${deg.toFixed(2)} 90 95)`);
+    const blink = ms >= 1550 && ms < 1720;
+    open.setAttribute('display', blink ? 'none' : 'inline');
+    shut.setAttribute('display', blink ? 'inline' : 'none');
+  });
+}
+// The cat's tail swishes three times around its base.
+function swish() {
+  if (reduceMotion()) return;
+  const tail = $('#cat .tail');
+  if (!tail) return;
+  animate('swish', 1500, (ms) => {
+    const deg = ms < 1500 ? -22 * Math.sin((ms / 500) * 2 * Math.PI) * (1 - ms / 1700) : 0;
+    tail.setAttribute('transform', `rotate(${deg.toFixed(2)} 3 70)`);
+  });
+}
+function hello() { wave(); swish(); }
+$('#avatar').addEventListener('click', wave);
+$('#cat').addEventListener('click', swish);
+// Opening the app again after switching away says hello again.
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') hello(); });
+
 async function init() {
-  const hair = hairForMonth();
-  $('#avatar').innerHTML = avatarSVG(hair);
+  const hair = hairForMonth(), cat = catForMonth();
+  $('#avatar').innerHTML = avatarFigure(hair);
+  $('#cat').innerHTML = catSVG(cat);
   setAvatarFavicon();
   $('#today').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
-  $('#hairNote').textContent = `This month's hair: ${hair.name}. It changes every month.`;
+  $('#hairNote').textContent = `This month: ${hair.name} hair and a ${cat.name} cat. They change every month.`;
+  setTimeout(hello, 350);
   try {
     renderMoney(await Rojak.load('money'));
     await renderBackupInfo();
