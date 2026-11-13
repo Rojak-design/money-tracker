@@ -49,12 +49,12 @@ Coral-coloured, so it's easy to tell apart from Money. Three tabs:
   - **Distance & pace**: distance, time, pace and average heart rate. Fill in any two of distance, time and pace and the third is worked out. Each type shows pace as min:sec per km, km/h, or min:sec per 100 m with the distance in metres (as for swimming).
   - **Movements & sets**: add movements (that type's movements are suggested first, or type a new one and it's added to the type's list), each with sets of reps and weight in kg (weight can be left empty). **+ Add set** copies the set before it.
 - **Body** – body weight, height and (optionally) body fat %, one entry per day. Shows the latest weight and the change since the entry before, BMI and body fat.
-- **Recovery** – recovery score, HRV, resting heart rate, sleep (h:mm or hours), sleep score and strain, one entry per day. The recovery score is green (67%+), yellow (34–66%) or red, as in Whoop.
+- **Recovery** – recovery score, HRV, resting heart rate, sleep (h:mm or hours), sleep score, strain and recovery time (hours until fully recovered, as Garmin shows it; type `36` or `1d 12h`), one entry per day. The recovery score is green (67%+), yellow (34–66%) or red, as in Whoop.
 
 Saved in the shared store under `mod:fitness`, every entry with its own `date` (YYYY-MM-DD), so other modules (e.g. a habit tracker) can read it:
 `workoutTypes` (`{id, name, icon, kind: cardio|strength|other, pace, movements: [names], hidden}`, in the order shown),
 `workouts` (`{date, typeId, type (the type's name), kind, durationMin, notes, cardio: {distanceKm, timeSec, paceSecPerKm, avgHr}, movements: [{name, sets: [{reps, weightKg}]}]}`),
-`bodyMeasurements` (`{date, weightKg, heightCm, bodyFatPct}`), `recoveryDays` (`{date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, strain}`). Empty numbers are saved as `null`.
+`bodyMeasurements` (`{date, weightKg, heightCm, bodyFatPct}`), `recoveryDays` (`{date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, strain, recoveryTimeHours}`). Empty numbers are saved as `null`.
 
 ## Publish with GitHub Pages
 1. On GitHub, open this repository → **Settings** → **Pages**.

@@ -87,7 +87,13 @@ main { padding: 0 16px; max-width: 640px; margin: 0 auto; }
 .tile .label { font-size: 12px; color: var(--muted); }
 .tile .value { font-size: 20px; font-weight: 700; margin-top: 2px; white-space: nowrap; }
 .tile .value small { font-size: 13px; font-weight: 600; color: var(--muted); margin-left: 2px; }
-@media (max-width: 360px) { .tiles { grid-template-columns: 1fr 1fr; } }
+/* A tile left on its own in the last row fills the row. */
+.tiles .tile:last-child:nth-child(3n+1) { grid-column: 1 / -1; }
+@media (max-width: 360px) {
+  .tiles { grid-template-columns: 1fr 1fr; }
+  .tiles .tile:last-child:nth-child(3n+1) { grid-column: auto; }
+  .tiles .tile:last-child:nth-child(2n+1) { grid-column: 1 / -1; }
+}
 
 /* Forms */
 .form { display: flex; flex-direction: column; gap: 14px; }
