@@ -113,3 +113,4 @@ main { padding: 0 16px; max-width: 640px; margin: 0 auto; }
 .module-card.fitness .open { color: var(--accent); }
 .module-card.fitness .stat { background: var(--accent-soft); }
 .module-card.fitness .stat .value small { font-size: 14px; font-weight: 600; color: var(--muted); margin-left: 2px; }
+.stat.wide { grid-column: 1 / -1; }

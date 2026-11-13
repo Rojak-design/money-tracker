@@ -6,6 +6,7 @@
   --muted: #6b7785;
   --line: #e7e2df;
   --primary: #c2410c;
+  --s1: #c2410c; --s2: #2563eb; /* chart lines: lift, body weight */
   --primary-soft: #fdebe1;
   --on-primary: #ffffff;
   --danger: #9f1239;
@@ -29,6 +30,7 @@
     --muted: #a39892;
     --line: #342c29;
     --primary: #fb923c;
+    --s1: #ea580c; --s2: #3b82f6;
     --primary-soft: #3b2114;
     --on-primary: #2a1205;
     --danger: #fb7185;
@@ -281,3 +283,30 @@ label.imported input { border-color: var(--primary); }
 .swatch { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
 .swatch.on { border-color: var(--text); box-shadow: 0 0 0 2px var(--card) inset; }
 .row-btns { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+
+/* ---------- Records ---------- */
+.card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.card-head h2 { margin: 0; }
+.tiles.runs { grid-template-columns: 1fr 1fr; }
+.tiles.runs .tile:last-child { grid-column: auto; }
+.run-tile { text-align: left; font: inherit; color: inherit; border: 0; cursor: pointer; }
+.item .amt .sub { font-size: 11px; font-weight: 400; color: var(--muted); text-align: right; }
+.rep-maxes { display: flex; flex-direction: column; gap: 2px; font-size: 14px; margin-top: 4px; }
+.chart { margin: 4px 0 0; }
+.chart svg { width: 100%; height: auto; display: block; overflow: visible; }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .tick { fill: var(--muted); font-size: 11px; }
+.chart .line { fill: none; stroke: var(--c); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .dot { fill: var(--c); stroke: var(--card); stroke-width: 2; }
+.chart .s1 { --c: var(--s1); }
+.chart .s2 { --c: var(--s2); }
+.chart .s2 .line { stroke-dasharray: 5 4; }
+.chart .end { fill: var(--muted); font-size: 11px; font-weight: 600; }
+.chart .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); margin-bottom: 2px; }
+.chart .key i { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--c); vertical-align: middle; margin-right: 6px; }
+.chart .key.s2 i { border-top-style: dashed; }
+.chart .dot.on { r: 6.5; }
+.chart .hit { fill: transparent; cursor: pointer; }
+.chart .readout { margin-top: 2px; min-height: 1.3em; }
+.rec-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--card); }
+.rec-row.dup { opacity: .7; }
