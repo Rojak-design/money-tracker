@@ -9,9 +9,7 @@
                           cardio?:    { distanceKm, timeSec, paceSecPerKm, avgHr },
                           movements?: [ { name, sets: [ { reps, weightKg } ] } ] }
      bodyMeasurements:  { id, date, weightKg, heightCm, bodyFatPct }          one per day
-     recoveryDays:      { id, date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, strain,
-                          recoveryTimeHours, source }  one per day; recoveryTimeHours is the time until fully
-                          recovered, as shown by Garmin
+     recoveryDays:      { id, date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, strain, source }  one per day
    Numbers left empty are saved as null. */
 'use strict';
 
@@ -646,17 +644,8 @@ const RECOVERY_FIELDS = [
   { key: 'restingHr', label: 'Resting heart rate', unit: 'bpm', min: 25, max: 150, dp: 0, ph: 'e.g. 54' },
   { key: 'sleepHours', label: 'Sleep', unit: 'hours', min: 0, max: 24, dp: 2, ph: 'e.g. 7:30' },
   { key: 'sleepScore', label: 'Sleep score', unit: '%', min: 0, max: 100, dp: 0, ph: 'e.g. 85' },
-  { key: 'strain', label: 'Strain', unit: '0–21', min: 0, max: 21, dp: 1, ph: 'e.g. 12.4' },
-  { key: 'recoveryTimeHours', label: 'Recovery time', unit: 'hours until fully recovered', min: 0, max: 168, dp: 0, ph: 'e.g. 36' }
+  { key: 'strain', label: 'Strain', unit: '0–21', min: 0, max: 21, dp: 1, ph: 'e.g. 12.4' }
 ];
-// Recovery time typed as hours ("36", "36h") or days and hours ("1d 12h").
-function parseHours(v) {
-  const s = String(v ?? '').trim().toLowerCase();
-  if (!s) return null;
-  const m = s.match(/^(?:(\d+)\s*d(?:ays?)?)?\s*(?:(\d+(?:[.,]\d+)?)\s*h(?:ours?|rs?)?)?$/);
-  if (m && (m[1] || m[2])) return (+m[1] || 0) * 24 + (num(m[2]) || 0);
-  return num(s);
-}
 // Whoop's colours for the recovery score: green 67+, yellow 34–66, red below.
 const recoveryColor = (s) => (s == null ? '' : s >= 67 ? 'var(--good)' : s >= 34 ? '#d49b00' : 'var(--danger)');
 function recoveryValue(r, key) {
@@ -666,7 +655,6 @@ function recoveryValue(r, key) {
   if (key === 'recoveryScore' || key === 'sleepScore') return `${fmt(v, 0)}<small>%</small>`;
   if (key === 'hrvMs') return `${fmt(v, 0)}<small>ms</small>`;
   if (key === 'restingHr') return `${fmt(v, 0)}<small>bpm</small>`;
-  if (key === 'recoveryTimeHours') return `${fmt(v, 0)}<small>h</small>`;
   return fmt(v, 1);
 }
 function renderRecovery() {
@@ -684,7 +672,7 @@ function renderRecovery() {
   list.innerHTML = rs.map((r) => {
     const sub = [r.hrvMs != null ? `HRV ${fmt(r.hrvMs, 0)} ms` : '', r.restingHr != null ? `RHR ${fmt(r.restingHr, 0)}` : '',
       r.sleepHours != null ? `Sleep ${fmtSleep(r.sleepHours)}${r.sleepScore != null ? ` (${fmt(r.sleepScore, 0)}%)` : ''}` : r.sleepScore != null ? `Sleep ${fmt(r.sleepScore, 0)}%` : '',
-      r.strain != null ? `Strain ${fmt(r.strain, 1)}` : '', r.recoveryTimeHours != null ? `Recovery time ${fmt(r.recoveryTimeHours, 0)} h` : ''].filter(Boolean).join(' · ');
+      r.strain != null ? `Strain ${fmt(r.strain, 1)}` : ''].filter(Boolean).join(' · ');
     return `<button class="item" data-r="${r.id}">
       <span class="ico" aria-hidden="true">🔋</span>
       <div class="left"><div class="title">${esc(niceDate(r.date))}</div><div class="sub">${esc(sub) || '&nbsp;'}</div></div>
@@ -713,8 +701,8 @@ function recoverySheet(id) {
     const entry = { date, source: existing ? existing.source || 'manual' : 'manual' };
     for (const f of RECOVERY_FIELDS) {
       const raw = $('#r_' + f.key).value;
-      const n = f.key === 'sleepHours' ? parseSleep(raw) : f.key === 'recoveryTimeHours' ? parseHours(raw) : num(raw);
-      if (Number.isNaN(n) || (n != null && (n < f.min || n > f.max))) return toast(`Check the ${f.key === 'hrvMs' ? 'HRV' : f.label.toLowerCase()} (${f.min}–${f.max}${f.key === 'sleepHours' || f.key === 'recoveryTimeHours' ? ' hours' : ''})`);
+      const n = f.key === 'sleepHours' ? parseSleep(raw) : num(raw);
+      if (Number.isNaN(n) || (n != null && (n < f.min || n > f.max))) return toast(`Check the ${f.key === 'hrvMs' ? 'HRV' : f.label.toLowerCase()} (${f.min}–${f.max}${f.key === 'sleepHours' ? ' hours' : ''})`);
       entry[f.key] = round(n, f.dp);
     }
     if (RECOVERY_FIELDS.every((f) => entry[f.key] == null)) return toast('Fill in at least one number');
