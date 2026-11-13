@@ -405,9 +405,11 @@ const thumbs = (list) => `<div class="shots">${list.map((s, i) => `<img src="${s
 
 // The activities read, each with its category to check. Ones already on the calendar are unticked.
 function activitiesSheet(rows, shots, next) {
+  reopen = () => activitiesSheet(rows, shots, next);
   const dup = (r) => state.activities.find((a) => a.date === r.date && (a.time ? a.time === r.time : sameName(a.name, r.name)));
   openSheet('Check imported activities', `<form class="form" id="iForm" novalidate>
       <div class="import-banner"><div>📷 <strong>Read ${rows.length} activit${rows.length > 1 ? 'ies' : 'y'}</strong> from ${shots.length} screenshot${shots.length > 1 ? 's' : ''}. Check each category — it's what shows on the calendar. Change the category for a name and that name gets it next time too. Nothing is saved until you tap Save.</div>
+        <button type="button" class="link-btn" data-cats>Edit categories and icons ›</button>
         ${thumbs(shots)}</div>
       <div class="imp-list">${rows.map((r, i) => { const d = dup(r); return `<div class="imp-row${d ? ' dup' : ''}" data-i="${i}">
         <label class="check"><input type="checkbox" class="ion" ${d ? '' : 'checked'}>

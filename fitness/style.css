@@ -280,3 +280,4 @@ label.imported input { border-color: var(--primary); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .swatch { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
 .swatch.on { border-color: var(--text); box-shadow: 0 0 0 2px var(--card) inset; }
+.row-btns { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
