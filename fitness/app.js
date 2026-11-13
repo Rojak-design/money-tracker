@@ -116,11 +116,13 @@ function num(v) {
 const round = (n, dp) => (n == null ? null : Math.round(n * 10 ** dp) / 10 ** dp);
 const fmt = (n, dp = 1) => (n == null ? '' : (+n.toFixed(dp)).toLocaleString(undefined, { maximumFractionDigits: dp }));
 
-// Times: "28:36" (minutes:seconds), "1:02:30" (hours:minutes:seconds) or "28" (minutes) → seconds.
+// Many phone number keypads have no ":" key, so a dot or comma works as one: "2.40" is 2:40.
+const colons = (s) => String(s ?? '').trim().replace(/\s*[.,:]\s*/g, ':');
+// Times: "28:36" or "28.36" (minutes:seconds), "1:02:30" (hours:minutes:seconds) or "28" (minutes) → seconds.
 function parseTime(v) {
-  const s = String(v ?? '').trim();
+  const s = colons(v);
   if (!s) return null;
-  if (/^\d+([.,]\d+)?$/.test(s)) return Math.round(num(s) * 60);
+  if (/^\d+$/.test(s)) return +s * 60;
   const m = s.match(/^(\d+):(\d{1,2})(?::(\d{1,2}))?$/);
   if (!m) return NaN;
   return m[3] != null ? +m[1] * 3600 + +m[2] * 60 + +m[3] : +m[1] * 60 + +m[2];
@@ -136,7 +138,7 @@ function parsePace(v, how) {
   const s = String(v ?? '').trim();
   if (!s) return null;
   if (how === 'speed') { const kmh = num(s); return kmh > 0 ? 3600 / kmh : NaN; }
-  const sec = /:/.test(s) ? parseTime(s) : Math.round(num(s) * 60); // "5:30" or "5.5" minutes
+  const sec = parseTime(s); // "5:30" or "5.30" (min:sec), or "5" (minutes)
   if (!(sec > 0)) return NaN;
   return how === '100m' ? sec * 10 : sec;
 }
@@ -293,11 +295,11 @@ function workoutSheet(id, copyFrom) {
         <h3 id="wCardioHead">Distance, time and pace</h3>
         <div class="grid2">
           <label><span id="wDistLabel">Distance (km)</span><input id="wDist" inputmode="decimal" autocomplete="off"></label>
-          <label>Time <input id="wTime" inputmode="numeric" placeholder="mm:ss or h:mm:ss" autocomplete="off"></label>
-          <label><span id="wPaceLabel">Pace (min:sec /km)</span><input id="wPace" inputmode="decimal" autocomplete="off"></label>
+          <label>Time <input id="wTime" inputmode="decimal" data-fmt="time" placeholder="e.g. 28:36" autocomplete="off"></label>
+          <label><span id="wPaceLabel">Pace (min:sec /km)</span><input id="wPace" inputmode="decimal" data-fmt="pace" autocomplete="off"></label>
           <label>Avg heart rate <input id="wHr" inputmode="numeric" placeholder="bpm" autocomplete="off"></label>
         </div>
-        <div class="hint">Fill in any two of distance, time and pace — the third is worked out.</div>
+        <div class="hint">Fill in any two of distance, time and pace — the third is worked out. Times can be typed with a dot instead of ":" (28.36 = 28:36).</div>
         <div id="wIntWrap" class="form" style="gap:8px">
           <h3>Intervals <span class="hint">optional</span></h3>
           <div class="int-row int-head hidden" id="wIntHead"><span>Rep</span><span id="wIntDistHead">m</span><span>Time</span><span id="wIntPaceHead">Pace</span><span>Rest</span><span></span></div>
@@ -320,6 +322,15 @@ function workoutSheet(id, copyFrom) {
       ${existing ? `<div class="btn-row"><button type="button" class="btn secondary" id="wCopy">Log again</button>
         <button type="button" class="btn danger" id="wDel">Delete</button></div>` : ''}
     </form>`);
+
+  // When you leave a time, pace or rest box, it's shown the way it was read ("2.40" → "2:40", "90" rest → "1:30").
+  $('#wForm').addEventListener('change', (e) => {
+    const el = e.target, f = el.dataset && el.dataset.fmt;
+    if (!f || !el.value.trim()) return;
+    const v = f === 'time' ? parseTime(el.value) : f === 'rest' ? parseRest(el.value) : parsePace(el.value, how());
+    if (!(v > 0)) return;
+    if (f === 'pace') { if (how() !== 'speed') el.value = fmtPace(v, how()); } else el.value = fmtTime(v);
+  });
 
   // Cardio: distance, time and pace — the two typed last work out the third.
   const fields = { dist: $('#wDist'), time: $('#wTime'), pace: $('#wPace') };
@@ -357,9 +368,9 @@ function workoutSheet(id, copyFrom) {
     const t = typeOf(type);
     row.innerHTML = `<span class="n"></span>
       <input class="idist" inputmode="decimal" aria-label="Rep distance" value="${r && r.distanceKm ? fmtIntDist(r.distanceKm, t) : ''}">
-      <input class="itime" inputmode="numeric" aria-label="Rep time (min:sec)" value="${r && r.timeSec ? fmtTime(r.timeSec) : ''}">
-      <input class="ipace" inputmode="decimal" aria-label="Rep pace" value="${r && r.paceSecPerKm ? fmtPace(r.paceSecPerKm, t.pace) : ''}">
-      <input class="irest" inputmode="numeric" aria-label="Rest after this rep (min:sec or seconds)" value="${r && r.restSec ? fmtTime(r.restSec) : ''}">
+      <input class="itime" inputmode="decimal" data-fmt="time" aria-label="Rep time (min:sec)" value="${r && r.timeSec ? fmtTime(r.timeSec) : ''}">
+      <input class="ipace" inputmode="decimal" data-fmt="pace" aria-label="Rep pace" value="${r && r.paceSecPerKm ? fmtPace(r.paceSecPerKm, t.pace) : ''}">
+      <input class="irest" inputmode="decimal" data-fmt="rest" aria-label="Rest after this rep (min:sec or seconds)" value="${r && r.restSec ? fmtTime(r.restSec) : ''}">
       <button type="button" class="x-btn" aria-label="Remove rep">✕</button>`;
     const f = { dist: $('.idist', row), time: $('.itime', row), pace: $('.ipace', row) };
     let order = ['pace', 'dist', 'time'].filter((k) => f[k].value);
@@ -455,7 +466,7 @@ function workoutSheet(id, copyFrom) {
     el.className = 'move';
     el.innerHTML = `<div class="move-head"><input class="mname" list="moveNames" placeholder="Movement, e.g. ${esc((typeOf(type).movements || [])[0] || 'Squat')}" aria-label="Movement" value="${esc(m ? m.name : '')}" autocomplete="off">
         <button type="button" class="x-btn" aria-label="Remove movement">🗑</button></div>
-      <label class="rest-row">Rest between sets <input class="rest" inputmode="numeric" placeholder="e.g. 1:30" aria-label="Rest between sets (min:sec, or seconds)" value="${m && m.restSec ? fmtTime(m.restSec) : ''}" autocomplete="off"></label>
+      <label class="rest-row">Rest between sets <input class="rest" inputmode="decimal" data-fmt="rest" placeholder="e.g. 1:30" aria-label="Rest between sets (min:sec, or seconds)" value="${m && m.restSec ? fmtTime(m.restSec) : ''}" autocomplete="off"></label>
       <div class="set-row set-head"><span>Set</span><span>Reps</span><span>kg</span><span></span></div>
       <div class="sets"></div>
       <button type="button" class="mini-btn add-set">+ Add set</button>`;
@@ -569,13 +580,13 @@ function workoutSheet(id, copyFrom) {
     });
   }
 }
-// Rest between sets: "1:30" (min:sec), "90" or "90s" (seconds), "2m" / "2 min" (minutes).
+// Rest between sets: "1:30" or "1.30" (min:sec), "90" or "90s" (seconds), "2m" / "2 min" (minutes).
 function parseRest(v) {
   const s = String(v ?? '').trim().toLowerCase();
   if (!s) return null;
-  if (/^\d+:\d{1,2}$/.test(s)) return parseTime(s);
-  let m = s.match(/^(\d+(?:[.,]\d+)?)\s*(s|sec|secs|seconds?)?$/);
-  if (m) return Math.round(num(m[1]));
+  if (/^\d+\s*[.,:]\s*\d{1,2}$/.test(s)) return parseTime(s);
+  let m = s.match(/^(\d+)\s*(s|sec|secs|seconds?)?$/);
+  if (m) return +m[1];
   m = s.match(/^(\d+(?:[.,]\d+)?)\s*(m|min|mins|minutes?)$/);
   if (m) return Math.round(num(m[1]) * 60);
   return NaN;
