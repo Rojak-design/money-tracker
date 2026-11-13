@@ -912,14 +912,42 @@ function renderRecon() {
   });
 }
 
+// Cards are checked against the bill to pay: the bill(s) due in the pay cycle (or month) of the date, less
+// what's been paid; if none falls in it, the latest closed statement. That's the "amount to pay" your bank
+// shows. "Everything owed" compares the card's whole balance instead.
+let reconCardMode = 'bill';
+function cardReconBill(a, date) {
+  const d = cardDueIn(a, periodContaining(date));
+  if (d.bills.length) return { amount: d.amount, due: d.bills[d.bills.length - 1].due, to: d.bills[d.bills.length - 1].to };
+  const st = cardStatement(a, cardStatementWindow(a, addDaysISO(cardStatementWindow(a, date).from, -1)));
+  return { amount: st.left, due: st.due, to: st.to };
+}
+// What the app says for an account on a date, as a balance (cards: negative when you owe).
+function reconAppValue(accId, date, mode) {
+  if (!isCard(accId)) return { app: balance(accId, date) };
+  if (mode === 'all') return { app: balance(accId, date) };
+  const b = cardReconBill(accountById(accId), date);
+  return { app: -b.amount, billDue: b.due, billTo: b.to };
+}
+document.querySelectorAll('#reconCardMode button').forEach((b) => b.addEventListener('click', () => {
+  reconCardMode = b.dataset.m; updateReconCompare();
+}));
+
 function updateReconCompare() {
   const accId = $('#reconAccount').value;
   const date = $('#reconDate').value || today();
   const card = isCard(accId);
+  $('#reconCardModeWrap').classList.toggle('hidden', !card);
+  document.querySelectorAll('#reconCardMode button').forEach((b) => b.classList.toggle('on', b.dataset.m === reconCardMode));
+  const v = accId ? reconAppValue(accId, date, reconCardMode) : { app: 0 };
   // For cards everything is shown as the amount owed (a positive number).
-  const app = accId ? (card ? owed(accId, date) : balance(accId, date)) : 0;
-  $('#reconBankLabel').textContent = card ? 'Amount owed shown by your bank' : 'Balance shown in your bank';
-  $('#reconAppLabel').textContent = card ? 'Owed in the app' : 'App balance';
+  const app = card ? -v.app : v.app;
+  const bill = card && reconCardMode === 'bill';
+  if (card) $('#reconCardHint').textContent = bill
+    ? `Compares the bill due ${shortDate(v.billDue)} (in this ${periodWord()}, or the latest statement) with the “amount to pay” in your bank app.`
+    : 'Compares everything owed on the card, including spending not on a statement yet.';
+  $('#reconBankLabel').textContent = card ? (bill ? 'Amount to pay shown by your bank' : 'Amount owed shown by your bank') : 'Balance shown in your bank';
+  $('#reconAppLabel').textContent = card ? (bill ? `Bill due ${shortDate(v.billDue)} in the app` : 'Owed in the app') : 'App balance';
   $('#reconApp').textContent = money(app);
   const bankRaw = $('#reconBank').value;
   const diffEl = $('#reconDiff');
@@ -991,7 +1019,7 @@ async function getOcrWorker(onProgress) {
 }
 
 // Amounts in OCR text, best guess first: [{cents, label}]. Card screens: prefer the outstanding / current balance.
-function findBalanceCandidates(text, forCard) {
+function findBalanceCandidates(text, forCard, bill) {
   const lines = text.split(/\n+/).map((l) => l.trim()).filter(Boolean);
   const re = /(S\$|SGD|\$)?\s*(\d{1,3}(?:[,\s]\d{3})+|\d+)[.,](\d{2})(?![\d%])/g;
   const found = new Map();
@@ -1006,6 +1034,8 @@ function findBalanceCandidates(text, forCard) {
       if (/(current|ledger|account|total)\s*bal/.test(ctx)) score += 5;
       if (/outstanding|statement\s*bal|amount\s*due|total\s*due/.test(ctx)) score += forCard ? 6 : 2;
       if (/balance/.test(ctx)) score += 3;
+      if (forCard && /amount\s*to\s*pay|statement\s*(bal|amount)|amount\s*due|total\s*due/.test(ctx)) score += bill ? 6 : 0;
+      if (forCard && /amount\s*used|current\s*bal|outstanding/.test(ctx)) score += bill ? -2 : 4;
       if (/available\s*(credit|limit)|credit\s*limit|\blimit\b|min(imum)?\.?\s*(payment|amount|due)|interest|reward|points|cashback|rebate|pending|spent|transaction/.test(ctx)) score -= 5;
       const label = (/[a-z]{3,}/i.test(line.replace(m[0], '')) ? line.replace(m[0], '') : lines[i - 1] || '').replace(/[^\w\s&()'-]/g, ' ').replace(/\s+/g, ' ').replace(/^[\s-]+|[\s-]+$/g, '').slice(0, 40);
       const prev = found.get(cents);
@@ -1032,12 +1062,20 @@ async function readBalanceFromScreenshot(file) {
   if (run !== ocrRun) return;
   // If exactly one of your account names appears in the screenshot, pick that account.
   let accNote = '';
-  const named = state.accounts.filter((a) => a.name.trim().length >= 3 && text.toLowerCase().includes(a.name.trim().toLowerCase()));
+  const low = text.toLowerCase();
+  let named = state.accounts.filter((a) => a.name.trim().length >= 3 && low.includes(a.name.trim().toLowerCase()));
+  // A credit card screen (e.g. "UOB CREDIT CARD") names the bank, not the card as you called it ("UOB CC"):
+  // pick the card whose name starts with that bank's name.
+  if (/credit\s*card|amount\s*to\s*pay|statement/.test(low) && !named.some((a) => a.type === 'credit')) {
+    const cards = cardAccounts().filter((c) => named.some((a) => c.name.toLowerCase().startsWith(a.name.trim().toLowerCase())));
+    if (cards.length === 1) named = cards;
+  }
+  if (named.length > 1 && /credit\s*card/.test(low)) named = named.filter((a) => a.type === 'credit');
   if (named.length === 1 && $('#reconAccount').value !== named[0].id) {
     $('#reconAccount').value = named[0].id;
     accNote = ` Account set to <strong>${esc(named[0].name)}</strong> (its name is in the screenshot).`;
   }
-  const cands = findBalanceCandidates(text, isCard($('#reconAccount').value));
+  const cands = findBalanceCandidates(text, isCard($('#reconAccount').value), reconCardMode === 'bill');
   if (!cands.length) {
     show('Couldn\'t find an amount in the screenshot — type the balance below.' + accNote);
     updateReconCompare();
@@ -1064,9 +1102,11 @@ $('#reconForm').addEventListener('submit', async (e) => {
   if (isNaN(bank)) return toast('Type the balance shown in your bank');
   if (isCard(accountId)) bank = -bank; // stored as a balance: owing money is negative
   const date = $('#reconDate').value || today();
+  const v = reconAppValue(accountId, date, reconCardMode);
   const rec = {
     id: uid(), accountId, date, bank,
-    app: balance(accountId, date),
+    app: v.app,
+    ...(v.billTo ? { billDue: v.billDue, billTo: v.billTo } : {}),
     hasImage: false, // screenshots are read for the balance, not kept
     note: $('#reconNote').value.trim(),
     adjusted: false
@@ -1097,8 +1137,8 @@ async function reconSheet(id) {
     <div class="form">
       <div class="muted small">${esc(accountName(r.accountId))} · ${niceDate(r.date)}</div>
       <div class="compare">
-        <div><span class="muted small">Bank said${card ? ' (owed)' : ''}</span><strong>${shown(r.bank)}</strong></div>
-        <div><span class="muted small">App said${card ? ' (owed)' : ''}</span><strong>${shown(r.app)}</strong></div>
+        <div><span class="muted small">Bank said${card ? (r.billTo ? ' (to pay)' : ' (owed)') : ''}</span><strong>${shown(r.bank)}</strong></div>
+        <div><span class="muted small">App said${card ? (r.billTo ? ` (bill due ${shortDate(r.billDue)})` : ' (owed)') : ''}</span><strong>${shown(r.app)}</strong></div>
       </div>
       <div class="compare" style="grid-template-columns:1fr">
         <div><span class="muted small">Difference (bank − app)</span>
@@ -1133,7 +1173,7 @@ async function reconSheet(id) {
     const category = readCatPicker('adj', adjType);
     if (!category) return toast('Type a name for the new category');
     const tx = {
-      id: uid(), accountId: r.accountId, date: r.date,
+      id: uid(), accountId: r.accountId, date: r.billTo && r.billTo < r.date ? r.billTo : r.date, // a bill's fix goes on its statement
       type: adjType, amount: Math.abs(diff),
       category, note: 'Reconciliation adjustment'
     };
