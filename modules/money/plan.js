@@ -1,4 +1,4 @@
-/* Money Tracker — Plan tab: recurring payments, savings projects and the 12-month forecast.
+/* Rojak · Money module — Plan tab: recurring payments, savings projects and the 12-month forecast.
    Uses the helpers and `state` from app.js. */
 'use strict';
 

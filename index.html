@@ -3,27 +3,33 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Money Tracker</title>
-  <meta name="description" content="A simple money tracker that keeps your data on your phone.">
+  <title>Rojak</title>
+  <meta name="description" content="Rojak — your everyday super app. Starts with a money tracker; your data stays on your phone.">
   <meta name="theme-color" content="#0f766e">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon-v2.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="apple-touch-icon-v2.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Money">
+  <meta name="apple-mobile-web-app-title" content="Rojak">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <!-- When app files change, bump ?v= here and the version in sw.js so phones load matching files. -->
-  <link rel="stylesheet" href="style.css?v=24">
+  <link rel="stylesheet" href="style.css?v=25">
 </head>
 <body>
   <header class="topbar">
-    <h1 id="viewTitle">Accounts</h1>
+    <h1 id="viewTitle">Rojak</h1>
   </header>
 
   <main>
+    <!-- HOME (core/home.js): summary cards and shortcuts for every module -->
+    <section id="view-home" class="view active">
+      <div id="homeBody"></div>
+    </section>
+
+    <!-- ===== MONEY MODULE (modules/money) ===== -->
     <!-- ACCOUNTS -->
-    <section id="view-accounts" class="view active">
+    <section id="view-accounts" class="view">
       <div class="card total-card">
         <div class="muted" id="totalLabel">Total of all accounts</div>
         <div id="totalBalance" class="big">0.00</div>
@@ -98,6 +104,7 @@
       <div class="card form">
         <h2>Backup</h2>
         <p class="muted small">Your data lives only on this phone. Export a backup file regularly and keep it somewhere safe (e.g. email it to yourself or save to Files / Drive).</p>
+        <p class="muted small">The backup file includes every Rojak module and your screenshots. Backups made before Rojak can still be imported.</p>
         <button class="btn full" id="exportBtn">Export backup</button>
         <label class="btn secondary full file-btn">Import backup
           <input type="file" id="importFile" accept=".json,application/json">
@@ -127,10 +134,11 @@
     </section>
   </main>
 
-  <button id="fab" class="fab" aria-label="Add transaction">+</button>
+  <button id="fab" class="fab hidden" aria-label="Add transaction">+</button>
 
   <nav class="tabbar">
-    <button data-view="accounts" class="active"><span>🏦</span>Accounts</button>
+    <button data-view="home" class="active"><span>🏠</span>Home</button>
+    <button data-view="accounts"><span>🏦</span>Accounts</button>
     <button data-view="tx"><span>📋</span>History</button>
     <button data-view="recon"><span>✅</span>Reconcile</button>
     <button data-view="plan"><span>📈</span>Plan</button>
@@ -151,7 +159,10 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="app.js?v=24"></script>
-  <script src="plan.js?v=24"></script>
+  <script src="core/store.js?v=25"></script>
+  <script src="modules/money/app.js?v=25"></script>
+  <script src="modules/money/plan.js?v=25"></script>
+  <script src="modules/money/module.js?v=25"></script>
+  <script src="core/home.js?v=25"></script>
 </body>
 </html>

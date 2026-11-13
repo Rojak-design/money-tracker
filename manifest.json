@@ -1,7 +1,7 @@
 {
-  "name": "Money Tracker",
-  "short_name": "Money",
-  "description": "Track accounts, spending and income. Data stays on your phone.",
+  "name": "Rojak",
+  "short_name": "Rojak",
+  "description": "Your everyday super app, starting with a money tracker. Data stays on your phone.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
