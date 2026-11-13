@@ -6,7 +6,8 @@
                           order shown; kind is what's logged: 'cardio' (distance & pace), 'strength' (movements &
                           sets) or 'other' (time & notes)
      workouts:          { id, date, typeId, type (the type's name), kind, durationMin, notes, source,
-                          cardio?:    { distanceKm, timeSec, paceSecPerKm, avgHr },
+                          cardio?:    { distanceKm, timeSec, paceSecPerKm, avgHr,
+                                        intervals?: [ { distanceKm, timeSec, paceSecPerKm, restSec } ] (one per rep) },
                           movements?: [ { name, restSec, sets: [ { reps, weightKg } ] } ] }
                           restSec: rest between sets of that movement, in seconds (null if not given)
      bodyMeasurements:  { id, date, weightKg, heightCm, bodyFatPct }          one per day
@@ -226,6 +227,7 @@ function workoutSummary(w) {
     const c = w.cardio;
     if (c.distanceKm != null) parts.push(fmtDist(c.distanceKm, typeOfW(w)));
     if (c.paceSecPerKm) parts.push(fmtPace(c.paceSecPerKm, how, true));
+    if (c.intervals && c.intervals.length) parts.push(intervalSummary(c.intervals, typeOfW(w)));
     if (c.avgHr) parts.push(`${c.avgHr} bpm`);
   }
   if (w.movements && w.movements.length) {
@@ -235,6 +237,23 @@ function workoutSummary(w) {
   }
   if (!parts.length && w.notes) parts.push(w.notes);
   return parts.join(' · ');
+}
+// Intervals in short, e.g. "6 × 800 m" or "4 × 400 m + 2 × 1 km" or "5 × 4:00": runs of the same rep.
+function intervalSummary(reps, t) {
+  const label = (r) => (r.distanceKm ? fmtIntDist(r.distanceKm, t, true) : r.timeSec ? fmtTime(r.timeSec) : '?');
+  const groups = [];
+  for (const r of reps) {
+    const l = label(r), g = groups[groups.length - 1];
+    if (g && g.l === l) g.n++; else groups.push({ l, n: 1 });
+  }
+  return groups.map((g) => (g.n > 1 ? `${g.n} × ${g.l}` : g.l)).join(' + ');
+}
+// Interval distances are in metres (km for types shown in km/h, such as cycling).
+const intInKm = (t) => t.pace === 'speed';
+function fmtIntDist(km, t, unit) {
+  if (intInKm(t)) return `${+km.toFixed(2)}${unit ? ' km' : ''}`;
+  const m = Math.round(km * 1000);
+  return unit && m >= 1000 && m % 1000 === 0 ? `${m / 1000} km` : `${m}${unit ? ' m' : ''}`;
 }
 function workoutLength(w) {
   if (w.cardio && w.cardio.timeSec) return fmtTime(w.cardio.timeSec);
@@ -279,6 +298,13 @@ function workoutSheet(id, copyFrom) {
           <label>Avg heart rate <input id="wHr" inputmode="numeric" placeholder="bpm" autocomplete="off"></label>
         </div>
         <div class="hint">Fill in any two of distance, time and pace — the third is worked out.</div>
+        <div id="wIntWrap" class="form" style="gap:8px">
+          <h3>Intervals <span class="hint">optional</span></h3>
+          <div class="int-row int-head hidden" id="wIntHead"><span>Rep</span><span id="wIntDistHead">m</span><span>Time</span><span id="wIntPaceHead">Pace</span><span>Rest</span><span></span></div>
+          <div id="wInts"></div>
+          <button type="button" class="mini-btn" id="wAddRep">+ Add intervals</button>
+          <div class="hint hidden" id="wIntHint">One row per rep. <strong>+ Add rep</strong> copies the one before. Fill in any two of distance, time and pace; rest is the rest after that rep.</div>
+        </div>
       </div>
 
       <div class="box" id="wStrength">
@@ -288,7 +314,7 @@ function workoutSheet(id, copyFrom) {
         <datalist id="moveNames"></datalist>
       </div>
 
-      <label>Duration (minutes) <input id="wDur" inputmode="numeric" autocomplete="off" placeholder="e.g. 45"></label>
+      <label id="wDurWrap">Duration (minutes) <input id="wDur" inputmode="numeric" autocomplete="off" placeholder="e.g. 45"></label>
       <label>Notes <textarea id="wNotes" placeholder="How did it feel? Where?">${esc(src ? src.notes : '')}</textarea></label>
       <button class="btn" type="submit">${existing ? 'Save changes' : 'Save workout'}</button>
       ${existing ? `<div class="btn-row"><button type="button" class="btn secondary" id="wCopy">Log again</button>
@@ -322,8 +348,61 @@ function workoutSheet(id, copyFrom) {
   // Editing a saved workout: changing the distance or time updates the pace.
   edited = ['pace', 'dist', 'time'].filter((k) => fields[k].value);
 
+  // Intervals: one row per rep (distance, time, pace, rest after it).
+  const intUnit = () => intInKm(typeOf(type));
+  const repDist = (row) => { const n = num($('.idist', row).value); return n == null || isNaN(n) ? n : intUnit() ? n : n / 1000; };
+  function addRep(r) {
+    const row = document.createElement('div');
+    row.className = 'int-row';
+    const t = typeOf(type);
+    row.innerHTML = `<span class="n"></span>
+      <input class="idist" inputmode="decimal" aria-label="Rep distance" value="${r && r.distanceKm ? fmtIntDist(r.distanceKm, t) : ''}">
+      <input class="itime" inputmode="numeric" aria-label="Rep time (min:sec)" value="${r && r.timeSec ? fmtTime(r.timeSec) : ''}">
+      <input class="ipace" inputmode="decimal" aria-label="Rep pace" value="${r && r.paceSecPerKm ? fmtPace(r.paceSecPerKm, t.pace) : ''}">
+      <input class="irest" inputmode="numeric" aria-label="Rest after this rep (min:sec or seconds)" value="${r && r.restSec ? fmtTime(r.restSec) : ''}">
+      <button type="button" class="x-btn" aria-label="Remove rep">✕</button>`;
+    const f = { dist: $('.idist', row), time: $('.itime', row), pace: $('.ipace', row) };
+    let order = ['pace', 'dist', 'time'].filter((k) => f[k].value);
+    const solve = () => {
+      const pair = order.slice(-2);
+      if (pair.length < 2) return;
+      const d = repDist(row), tm = parseTime(f.time.value), p = parsePace(f.pace.value, how());
+      const ok = (x) => x != null && x > 0;
+      if (!pair.includes('pace') && ok(d) && ok(tm)) f.pace.value = fmtPace(tm / d, how());
+      else if (!pair.includes('time') && ok(d) && ok(p)) f.time.value = fmtTime(p * d);
+      else if (!pair.includes('dist') && ok(tm) && ok(p)) f.dist.value = fmtIntDist(tm / p, typeOf(type));
+    };
+    for (const [k, el] of Object.entries(f)) el.addEventListener('input', () => { order = order.filter((x) => x !== k).concat(el.value.trim() ? [k] : []); solve(); });
+    $('.x-btn', row).addEventListener('click', () => { row.remove(); repsChanged(); });
+    $('#wInts').appendChild(row);
+    repsChanged();
+    return row;
+  }
+  function repsChanged() {
+    const rows = $$('#wInts .int-row');
+    rows.forEach((r, i) => { $('.n', r).textContent = i + 1; });
+    $('#wIntHead').classList.toggle('hidden', !rows.length);
+    $('#wIntHint').classList.toggle('hidden', !rows.length);
+    $('#wAddRep').textContent = rows.length ? '+ Add rep' : '+ Add intervals';
+  }
+  // The reps as typed, read in the given pace unit: [{distanceKm, timeSec, paceSecPerKm, restSec}] (NaN where unreadable).
+  function readReps(paceHow, inKm) {
+    return $$('#wInts .int-row').map((row) => {
+      const n = num($('.idist', row).value);
+      return { distanceKm: n == null || isNaN(n) ? n : inKm ? n : n / 1000, timeSec: parseTime($('.itime', row).value),
+        paceSecPerKm: parsePace($('.ipace', row).value, paceHow), restSec: parseRest($('.irest', row).value) };
+    });
+  }
+  $('#wAddRep').addEventListener('click', () => {
+    const prev = $$('#wInts .int-row').pop();
+    const row = addRep(prev ? readReps(how(), intUnit()).pop() : null);
+    if (!prev) $('.idist', row).focus();
+  });
+  for (const r of c.intervals || []) addRep(r);
+
   function setType(t) {
-    const before = how();
+    const before = how(), beforeKm = intUnit();
+    const reps = readReps(before, beforeKm);
     // Keep the distance and pace the same when switching between sports shown in different units.
     const d = readDist(), p = parsePace(fields.pace.value, before);
     type = t;
@@ -339,6 +418,16 @@ function workoutSheet(id, copyFrom) {
       if (d > 0) fields.dist.value = showDist(d);
       if (p > 0) fields.pace.value = fmtPace(p, how());
     }
+    // Intervals: show the reps in the new type's units.
+    $('#wIntDistHead').textContent = intUnit() ? 'km' : 'm';
+    $('#wIntPaceHead').textContent = how() === 'speed' ? 'km/h' : how() === '100m' ? '/100 m' : '/km';
+    if (before !== how() || beforeKm !== intUnit()) {
+      $('#wInts').innerHTML = '';
+      for (const r of reps) addRep({ distanceKm: r.distanceKm > 0 ? r.distanceKm : null, timeSec: r.timeSec > 0 ? r.timeSec : null,
+        paceSecPerKm: r.paceSecPerKm > 0 ? r.paceSecPerKm : null, restSec: r.restSec > 0 ? r.restSec : null });
+    }
+    // Distance & pace workouts: the time is the duration, so there's no separate duration box.
+    $('#wDurWrap').classList.toggle('hidden', kind === 'cardio');
     // This type's movements are suggested first, then movements from your other types.
     const mine = typeOf(t).movements || [];
     $('#moveNames').innerHTML = [...mine, ...allMoveNames().filter((n) => !mine.some((m) => sameName(m, n)))].map((n) => `<option value="${esc(n)}">`).join('');
@@ -397,7 +486,7 @@ function workoutSheet(id, copyFrom) {
     const date = $('#wDate').value;
     if (!date) return toast('Pick a date');
     const t = typeOf(type), kind = t.kind;
-    let durationMin = num($('#wDur').value);
+    let durationMin = kind === 'cardio' ? null : num($('#wDur').value);
     if (isNaN(durationMin) || durationMin < 0 || durationMin > 1440) return toast('Check the duration (minutes)');
     const w = { id: existing ? existing.id : uid(), date, typeId: t.id, type: t.name, kind, durationMin: durationMin == null ? null : round(durationMin, 0),
       notes: $('#wNotes').value.trim(), source: existing ? existing.source || 'manual' : 'manual' };
@@ -409,6 +498,27 @@ function workoutSheet(id, copyFrom) {
       if (Number.isNaN(p)) return toast(how() === 'speed' ? 'Check the speed' : 'Type the pace as min:sec, e.g. 5:30');
       if (Number.isNaN(hr) || (hr != null && (hr < 30 || hr > 230))) return toast('Check the heart rate (bpm)');
       const cardio = { distanceKm: d == null ? null : round(d, 3), timeSec: t, paceSecPerKm: p == null ? null : Math.round(p), avgHr: hr == null ? null : Math.round(hr) };
+      // Intervals: skip empty rows, check the rest, and work out each rep's missing value.
+      const reps = [];
+      for (const [i, r] of readReps(how(), intUnit()).entries()) {
+        if (r.distanceKm == null && r.timeSec == null && r.paceSecPerKm == null && r.restSec == null) continue;
+        if (Number.isNaN(r.distanceKm) || (r.distanceKm != null && r.distanceKm <= 0)) return toast(`Check the distance of rep ${i + 1}`);
+        if (Number.isNaN(r.timeSec) || (r.timeSec != null && r.timeSec <= 0)) return toast(`Type the time of rep ${i + 1} as min:sec`);
+        if (Number.isNaN(r.paceSecPerKm)) return toast(`Check the ${how() === 'speed' ? 'speed' : 'pace'} of rep ${i + 1}`);
+        if (Number.isNaN(r.restSec) || (r.restSec != null && r.restSec > 3600)) return toast(`Type the rest after rep ${i + 1} as min:sec or seconds`);
+        if (r.distanceKm == null && r.timeSec == null) return toast(`Give rep ${i + 1} a distance or a time`);
+        const rep = { distanceKm: r.distanceKm == null ? null : round(r.distanceKm, 3), timeSec: r.timeSec, paceSecPerKm: r.paceSecPerKm == null ? null : Math.round(r.paceSecPerKm), restSec: r.restSec };
+        if (!rep.paceSecPerKm && rep.distanceKm && rep.timeSec) rep.paceSecPerKm = Math.round(rep.timeSec / rep.distanceKm);
+        if (!rep.timeSec && rep.distanceKm && rep.paceSecPerKm) rep.timeSec = Math.round(rep.paceSecPerKm * rep.distanceKm);
+        if (rep.distanceKm == null && rep.timeSec && rep.paceSecPerKm) rep.distanceKm = round(rep.timeSec / rep.paceSecPerKm, 3);
+        reps.push(rep);
+      }
+      if (reps.length) {
+        cardio.intervals = reps;
+        // No total distance or time typed: use the reps' distance. (With a total time but no total distance, the
+        // reps' distance would leave out the warm-up and the rests and give a wrong pace, so it isn't used.)
+        if (cardio.distanceKm == null && cardio.timeSec == null && cardio.paceSecPerKm == null && reps.every((r) => r.distanceKm)) cardio.distanceKm = round(reps.reduce((n, r) => n + r.distanceKm, 0), 3);
+      }
       // Work out whatever can be worked out from the rest.
       if (!cardio.paceSecPerKm && cardio.distanceKm && cardio.timeSec) cardio.paceSecPerKm = Math.round(cardio.timeSec / cardio.distanceKm);
       if (!cardio.timeSec && cardio.distanceKm && cardio.paceSecPerKm) cardio.timeSec = Math.round(cardio.paceSecPerKm * cardio.distanceKm);
