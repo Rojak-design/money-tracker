@@ -498,6 +498,48 @@ function cardSpendBetween(id, from, to) {
   return state.transactions.filter((t) => t.accountId === id && !t.transferId && t.date >= from && t.date <= to)
     .reduce((s, t) => s + (t.type === 'expense' ? t.amount : -t.amount), 0);
 }
+// What a statement adds up to, in parts (all in cents):
+//  opening   – the card's starting balance, when its "owed as of" date falls in this statement
+//              (a balance owed on the statement day belongs to that statement's bill);
+//  spent     – entries on the card dated up to today (entries before "owed as of" are history only);
+//  planned   – entries dated after today (e.g. PayLater instalments logged ahead);
+//  recurring – recurring payments on this card due in the statement that haven't been logged
+//              (logged ones are already in spent / planned); missed lists the past-due ones not logged;
+//  paid      – card payments made after the statement closed, up to the next statement day.
+function cardStatement(a, w) {
+  const t = today();
+  const from = a.startDate && a.startDate > w.from ? a.startDate : w.from;
+  const res = { ...w, opening: 0, spent: 0, planned: 0, recurring: 0, missed: [], paid: 0 };
+  if (a.startDate && a.startDate >= w.from && a.startDate <= w.to) res.opening = Math.max(0, -a.start);
+  if (from <= w.to) {
+    for (const x of state.transactions) {
+      if (x.accountId !== a.id || x.transferId || x.date < from || x.date > w.to) continue;
+      const v = x.type === 'expense' ? x.amount : -x.amount;
+      if (x.date > t) res.planned += v; else res.spent += v;
+    }
+    for (const r of state.recurring) {
+      if (r.type !== 'expense' || r.accountId !== a.id) continue;
+      const due = occurrencesIdx(r, from, w.to);
+      if (!due.length) continue;
+      const logged = state.transactions.filter((x) => x.recurringId === r.id && x.accountId === a.id && x.date >= from && x.date <= w.to);
+      let loggedAmt = logged.reduce((s, x) => s + x.amount, 0);
+      for (const o of due) {
+        const amt = nthAmount(r, o.i);
+        const covered = Math.min(amt, loggedAmt);
+        loggedAmt -= covered;
+        if (covered >= amt) continue;
+        res.recurring += amt - covered;
+        if (o.d <= t) res.missed.push({ r, d: o.d, i: o.i, amount: amt - covered });
+      }
+    }
+  }
+  const nextTo = cardStatementWindow(a, addDaysISO(w.to, 1)).to;
+  res.paid = state.transactions.filter((x) => x.accountId === a.id && x.transferId && x.type === 'income' && x.date > w.to && x.date <= nextTo)
+    .reduce((s, x) => s + x.amount, 0);
+  res.total = res.opening + res.spent + res.planned + res.recurring;
+  res.left = Math.max(0, res.total - res.paid);
+  return res;
+}
 
 /* ---------- Forecast ---------- */
 // Day-to-day (non-recurring) history: everything except transfers and transactions linked to a recurring payment.
@@ -620,20 +662,19 @@ function forecast() {
           const lo = [from, all[k].start].sort()[1], hi = [to, all[k].end].sort()[0];
           if (lo <= hi) sum += rate[k] * (daysBetween(lo, hi) + 1);
         }
-        for (const r of state.recurring) {
-          if (r.type === 'expense' && r.accountId === a.id) sum += amountBetween(r, from, to);
-        }
-        return sum;
+        return sum; // recurring payments are counted by cardStatement()
       };
       let w = cardStatementWindow(a, addDaysISO(t, -62));
       for (let guard = 0; guard < 20 && w.from <= periods[11].end; guard++, w = cardStatementWindow(a, addDaysISO(w.to, 1))) {
         const i = rowIdx(w.due);
         const inNow = w.due >= current.start && w.due <= current.end;
         if (i < 0 && !inNow) continue;
-        const actual = cardSpendBetween(a.id, w.from, [w.to, t].sort()[0]) +
-          (w.to > t ? plannedSum([w.from, addDaysISO(t, 1)].sort()[1], w.to, (x) => x.accountId === a.id).card : 0);
+        // Logged + planned entries, the starting balance if it falls in this statement, recurring payments,
+        // and projected day-to-day spending for the days still to come. Bills already paid aren't counted again.
+        const st = cardStatement(a, w);
         const proj = w.to > t ? projected([w.from, addDaysISO(t, 1)].sort()[1], w.to) : 0;
-        const amount = Math.max(0, Math.round(actual + proj));
+        const full = Math.max(0, Math.round(st.total + proj));
+        const amount = w.due > t ? Math.max(0, full - st.paid) : full;
         if (!amount) continue;
         const bill = { card: a, from: w.from, to: w.to, due: w.due, amount, estimated: w.to > t };
         if (inNow) { nowBills.push(bill); if (w.due > t) remBills += amount; }
