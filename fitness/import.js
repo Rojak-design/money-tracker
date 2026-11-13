@@ -12,8 +12,7 @@
                      activity Overview / Stats         distance, time, average pace, average heart rate, calories
      Whoop           recovery, strain and sleep pages  recovery %, HRV, resting heart rate, sleep performance,
                                                        strain, hours of sleep; a workout's average heart rate, calories
-     Written workouts WodUp, Instagram posts, competition sheets…: movements with reps / sets / kg (weights you
-                     can add), and the text as notes
+     WodUp           the day's workout: movements with reps / sets / kg (weights you can add), text as notes
    Stats can come from a different app than the workout (e.g. a WodUp workout + Garmin's average heart rate and
    calories): picked together, or added later with "Add numbers from screenshots" in the workout's form. */
 'use strict';
@@ -196,8 +195,6 @@ function detect(shot) {
   if (/log\s*result|leaderboard|alternating sets|\bsets? of\b|rounds? (of|for)|\bAMRAP\b|\bEMOM\b|for time|time cap/i.test(t)) return 'wod';
   if (/at a\s*glance|body battery|hrv status|\bresting\b|sleep score|training readiness|overnight hrv/i.test(t)) return 'garminDay';
   if (/avg\.?\s*(pace|speed)|distance/i.test(t) || STATS.test(t)) return 'garminActivity';
-  // Anything else with lines that look like movements ("5x5 back squat", "21 thrusters") is a written workout.
-  if (writtenMoves(shot.lines.map((l) => cleanLine(l.text))).length >= 2) return 'wod';
   return null;
 }
 
@@ -289,7 +286,7 @@ function setsToMovements(acc, t) {
   return order.map(({ first, last, ...m }) => Object.assign(m, { group: m.group || null }));
 }
 
-/* ---------- Written workouts: WodUp, Instagram posts, competition sheets… ---------- */
+/* ---------- WodUp workouts ---------- */
 // Lines that are instructions or app buttons, not movements (kept out of the notes too where they're buttons).
 const WOD_SKIP = /^(log\s*result|leaderboard|view warm ?up|warm ?up|show (less|more)|scoring|comments?|like|reply|view all|liked by|share|save)\b/i;
 const NOT_MOVE = /^(rest|sets?|rounds?|reps?|minutes?|mins?|seconds?|secs?|for time|time cap|cap|every|then|each|with|build|scoring|score|notes?|tempo|rpe|and|or|of|at|in|on|the|a|an|total|weeks?|day|warm|cool|metcon|wod|skill|accessory|finisher|conditioning|strength|part|ascending|descending|ladder|pause|find)\b/i;
@@ -337,7 +334,9 @@ function writtenMoves(lines) {
     // Leave out part labels and bullets: "A1.", "B)", "1.", "-", "•". Men's/women's numbers ("12/10 calories",
     // "100/70 kg"): the second one is used, as for weights.
     const raw = raw0.replace(/^(?:[A-Z][0-9]?[.)]|\d{1,2}[.)](?!\d)|[-•*–])\s*/, '').trim()
-      .replace(/\b\d+\s*\/\s*(\d+)(?=\s*(?:cal|cals|calories|kcal)\b)/i, '$1').replace(/\bcalories\b/i, 'cal');
+      .replace(/\b\d+\s*\/\s*(\d+)(?=\s*(?:cal|cals|calories|kcal|m|meters?|metres?|k|km)\b)/i, '$1').replace(/\bcalories\b/i, 'cal')
+      // "1000 meters", "2k" -> "1000m", "2km"
+      .replace(/(\d)\s*(?:meters?|metres?)\b/gi, '$1m').replace(/(\d)k\b/gi, '$1km');
     // "SkiErg 12/10 calories", "Row 15 cal"
     m = raw.match(/^([A-Za-z][A-Za-z' -]+?)\s+(\d{1,4})\s*(?:cal|cals|kcal)\b/i);
     if (m && moveName(m[1])) { push({ read: `${moveName(m[1])} (cal)`, reps: +m[2], sets: scheme ? 1 : sets, scheme: Array.isArray(scheme) ? scheme : null }); continue; }
@@ -367,7 +366,7 @@ function writtenMoves(lines) {
     m = raw.match(/^(.+?)\s*[x×]\s*(\d{1,3})\b(.*)$/i);
     if (m && moveName(m[1])) { push({ read: moveName(m[1]), reps: +m[2], sets, kg: kgOf(m[3]) }); continue; }
     // "Run 400m", "Row 1000 m"
-    m = raw.match(/^(.+?)\s+(\d{2,5})\s*(m|km)\b/i);
+    m = raw.match(/^(.+?)\s+(\d{1,5}(?:[.,]\d+)?)\s*(m|km)\b/i);
     if (m && moveName(m[1])) { push({ read: `${moveName(m[1])} ${m[2]} ${m[3].toLowerCase()}`, sets }); continue; }
     // A bullet with just a movement ("- Burpee over the dumbbell"), or a movement under a rep scheme ("21-15-9" then
     // "Thrusters", "Pull-ups").
@@ -403,10 +402,15 @@ function parseWod(shot, acc) {
 }
 function wodToMovements(acc, t) {
   return acc.moves.map((mv) => {
-    const read = sentenceCase(mv.read.replace(/\s+/g, ' '));
+    let read = sentenceCase(mv.read.replace(/\s+/g, ' ')), unit = null, metres = null;
+    const cal = read.match(/^(.*?)\s*\(cal\)$/i);
+    if (cal) { read = cal[1]; unit = 'cal'; }
+    const dist = read.match(/^(.*?)\s+(\d+(?:[.,]\d+)?)\s*(m|km)$/i);
+    if (dist) { read = dist[1]; unit = 'm'; metres = Math.round(toNum(dist[2]) * (dist[3].toLowerCase() === 'km' ? 1000 : 1)); }
     const sets = Array.isArray(mv.scheme) ? mv.scheme.map((r) => ({ reps: r, weightKg: mv.kg || null }))
-      : Array.from({ length: Math.max(1, Math.min(mv.sets || 1, 30)) }, () => ({ reps: mv.reps || null, weightKg: mv.kg || null }));
-    return { importedName: read, name: ownMoveName(read, t), restSec: null, sets, group: mv.group || null };
+      : Array.from({ length: Math.max(1, Math.min(mv.sets || 1, 30)) }, () => ({ reps: metres || mv.reps || null, weightKg: unit ? null : mv.kg || null }));
+    if (!unit && CAL_MACHINE.test(read) && !mv.kg) unit = 'cal';
+    return Object.assign({ importedName: read, name: ownMoveName(read, t), restSec: null, sets, group: mv.group || null }, unit ? { unit } : {});
   });
 }
 
@@ -560,7 +564,7 @@ $$('[data-import]').forEach((b) => b.addEventListener('click', () => { fileInput
 fileInput.addEventListener('change', () => { if (fileInput.files.length) importShots([...fileInput.files]); });
 
 const KIND_NAMES = { garminLaps: 'Garmin intervals', garminStrength: 'Garmin strength', garminActivity: 'Garmin activity', garminDay: 'Garmin day',
-  whoop: 'Whoop', wod: 'written workout' };
+  whoop: 'Whoop', wod: 'WodUp' };
 
 async function importShots(files) {
   for (const u of lastUrls) URL.revokeObjectURL(u);
@@ -637,7 +641,7 @@ async function review(shots) {
       if (kinds.has('garminStrength')) tips.push(`Read ${n} sets in ${draft.movements.length} movements. Check every set was in your screenshots. Rename a movement and it'll be called that next time.`);
       if (kinds.has('wod')) {
         draft.notes = [wod0.title, ...wod0.notes].filter(Boolean).join('\n');
-        tips.push('From the written workout: check the movements, and fill in the weights you used (and reps where it says a ladder or AMRAP). The full text is in the notes.');
+        tips.push('From WodUp: check the movements, and fill in the weights you used (and reps where it says a ladder or AMRAP). The full text is in the notes.');
       }
     }
     if (draft.avgHr || draft.calories) tips.push(`Read ${[draft.avgHr ? `average heart rate ${draft.avgHr}` : '', draft.calories ? `${draft.calories} calories` : ''].filter(Boolean).join(' and ')}.`);
@@ -648,7 +652,7 @@ async function review(shots) {
     const found = (draft.movements && draft.movements.some((m) => m.name)) || c.distanceKm != null || c.timeSec != null || (c.intervals && c.intervals.length) || laps;
     const sources = [...kinds].map((k) => KIND_NAMES[k]).join(' + ');
     if (found) steps.push(() => workoutSheet(null, draft, {
-      source: kinds.has('wod') ? 'written workout' : 'Garmin',
+      source: kinds.has('wod') ? 'WodUp' : 'Garmin',
       banner: `<div class="import-banner"><div>📷 <strong>Read from ${workoutShots.length} screenshot${workoutShots.length > 1 ? 's' : ''}</strong> (${esc(sources)}). Check the numbers against your screenshots — tap one to see it bigger. Nothing is saved until you tap Save.</div>
         ${tips.map((x) => `<div>• ${esc(x)}</div>`).join('')}
         ${laps ? `<button type="button" class="mini-btn" id="lapsBtn">Add the ${laps.length} laps as intervals</button>` : ''}
@@ -695,7 +699,7 @@ async function review(shots) {
   if (!steps.length) {
     openSheet('Nothing found', `<div class="form">
       <p style="margin:0">No workout or recovery numbers could be found in ${shots.length > 1 ? 'these screenshots' : 'this screenshot'}.</p>
-      <p class="muted small" style="margin:0">Screens that work: Garmin Connect activity <strong>Intervals</strong> / <strong>Laps</strong>, <strong>Stats</strong> and <strong>Strength</strong> exercise lists, Garmin <strong>At a Glance</strong>, Whoop <strong>recovery</strong> and <strong>strain</strong>, and written workouts (WodUp, Instagram, competition sheets) with lines like "5x5 back squat" or "21 thrusters".</p>
+      <p class="muted small" style="margin:0">Screens that work: Garmin Connect activity <strong>Intervals</strong> / <strong>Laps</strong>, <strong>Stats</strong> and <strong>Strength</strong> exercise lists, Garmin <strong>At a Glance</strong>, Whoop <strong>recovery</strong> and <strong>strain</strong>, and <strong>WodUp</strong> workouts. For anything else, add the workout with <strong>+</strong>.</p>
       ${shots.length ? thumbs(shots) : ''}
       <button type="button" class="btn secondary" data-close>Close</button></div>`);
     return;
