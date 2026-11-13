@@ -275,10 +275,17 @@ function setsToMovements(acc, t) {
   const order = [], byName = {};
   for (const s of Object.values(acc.sets).sort((p, q) => p.n - q.n)) {
     const key = s.name.toLowerCase();
-    if (!byName[key]) { byName[key] = { importedName: s.name, name: ownMoveName(s.name, t), restSec: null, sets: [] }; order.push(byName[key]); }
+    if (!byName[key]) { byName[key] = { importedName: s.name, name: ownMoveName(s.name, t), restSec: null, sets: [], first: s.n, last: s.n }; order.push(byName[key]); }
     byName[key].sets.push({ reps: s.reps, weightKg: s.weightKg });
+    byName[key].last = s.n;
   }
-  return order;
+  // Movements whose sets alternate (one's sets fall between the other's) were done round by round.
+  let g = 0;
+  for (let i = 0; i < order.length; i++) for (let j = i + 1; j < order.length; j++) {
+    const a = order[i], b = order[j];
+    if (b.first < a.last && a.first < b.last) { const id = a.group || b.group || 'g' + ++g; a.group = b.group = id; }
+  }
+  return order.map(({ first, last, ...m }) => Object.assign(m, { group: m.group || null }));
 }
 
 /* ---------- Written workouts: WodUp, Instagram posts, competition sheets… ---------- */
@@ -293,50 +300,60 @@ function moveName(raw) {
   return n;
 }
 const kgOf = (raw) => { const m = raw.match(KG); if (!m) return null; const v = toNum(m[1]); return /lb|#/i.test(m[2]) ? round(v * 0.45359, 1) : v; };
-// The movements in some lines of text: [{ read, reps, sets, kg, scheme }].
+// The movements in some lines of text: [{ read, reps, sets, kg, scheme, group }]. Movements under one "5 rounds",
+// "5 alternating sets of" or "21-15-9" are done round by round (21 thrusters, 21 pull-ups, then 15 of each…): they
+// get the same `group`.
 function writtenMoves(lines) {
   const out = [];
-  let sets = 1, scheme = null;
+  let sets = 1, scheme = null, block = 0, circuit = false;
+  const push = (mv) => out.push(Object.assign(mv, { blockAt: block, inRounds: !!(scheme || sets > 1 || circuit) && !(mv.sets > 1 && mv.reps && !scheme && mv.sets !== sets) }));
   for (const raw0 of lines) {
     if (!raw0 || WOD_SKIP.test(raw0) || /^[+#]/.test(raw0)) continue;
     // "5 rounds for time", "5 alternating sets of:", "3 rds"
     let m = raw0.match(/(\d+)\s+(?:alternating\s+)?(?:sets|rounds|rds)\b/i);
-    if (m && !/^\d+\s*x/i.test(raw0)) { sets = +m[1]; scheme = null; continue; }
+    if (m && !/^\d+\s*x/i.test(raw0)) { sets = +m[1]; scheme = null; circuit = false; block++; continue; }
+    // "AMRAP 12 min", "EMOM 10", "For time:" — the movements below are done round by round.
+    if (/\b(AMRAP|EMOM|E\d+MOM)\b|^\W*for time\W*$/i.test(raw0) && !/^\d+\s+\w/.test(raw0)) { if (!scheme) { circuit = true; block++; } continue; }
     // A new part ("B.", "Part 2", "Metcon") starts again with one set.
-    if (/^(?:[A-Z][.)]|part\s+\d|metcon|strength|skill|accessory)\b/i.test(raw0) && !/^[A-Z][.)]\s*\d/.test(raw0)) { sets = 1; scheme = null; }
+    if (/^(?:[A-Z][.)]|part\s+\d|metcon|strength|skill|accessory)\b/i.test(raw0) && !/^[A-Z][.)]\s*\d/.test(raw0)) { sets = 1; scheme = null; circuit = false; block++; }
     // Leave out part labels and bullets: "A1.", "B)", "1.", "-", "•".
     const raw = raw0.replace(/^(?:[A-Z][0-9]?[.)]|\d{1,2}[.)](?!\d)|[-•*–])\s*/, '').trim();
     // "21-15-9 thrusters, pull-ups" / "2-4-6-8-10-..." (a ladder: reps not known)
     m = raw.match(/^(\d+(?:\s*[-–/]\s*\d+){2,})(\s*[-–]?\s*\.\.\.)?\s*(.*)$/);
     if (m) {
       scheme = m[2] ? 'ladder' : m[1].split(/\s*[-–/]\s*/).map(Number);
-      for (const part of m[3].split(/\s*(?:,|&|\band\b)\s*/)) { const n = moveName(part); if (n) out.push({ read: n, scheme, sets: 1 }); }
+      block++;
+      for (const part of m[3].split(/\s*(?:,|&|\band\b)\s*/)) { const n = moveName(part); if (n) push({ read: n, scheme, sets: 1 }); }
       continue;
     }
     // "5x5 Back squat @ 80kg", "3 x 10 lunges"
     m = raw.match(/^(\d{1,2})\s*[x×]\s*(\d{1,3})\s+(.+)$/i);
-    if (m && moveName(m[3])) { out.push({ read: moveName(m[3]), sets: +m[1], reps: +m[2], kg: kgOf(m[3]) }); continue; }
+    if (m && moveName(m[3])) { push({ read: moveName(m[3]), sets: +m[1], reps: +m[2], kg: kgOf(m[3]) }); continue; }
     // "Back squat 5x5 @ 80kg", "Back squat: 3 x 10, 60kg"
     m = raw.match(/^(.+?)[:\s]+(\d{1,2})\s*[x×]\s*(\d{1,3})\b(.*)$/i);
-    if (m && moveName(m[1])) { out.push({ read: moveName(m[1]), sets: +m[2], reps: +m[3], kg: kgOf(m[4]) }); continue; }
+    if (m && moveName(m[1])) { push({ read: moveName(m[1]), sets: +m[2], reps: +m[3], kg: kgOf(m[4]) }); continue; }
     // "8 Back Squats @ 70%", "20 cal row", "400m run"
     m = raw.match(/^(\d{1,4})\s*(m|km|cal|cals)?\s+(.+)$/i);
     if (m && moveName(m[3])) {
       const unit = m[2] && m[2].toLowerCase();
-      if (unit === 'm' || unit === 'km') out.push({ read: `${moveName(m[3])} ${m[1]} ${unit}`, sets, kg: kgOf(m[3]) });
-      else out.push({ read: unit ? `${moveName(m[3])} (cal)` : moveName(m[3]), reps: +m[1], sets: scheme ? 1 : sets, scheme: Array.isArray(scheme) ? scheme : null, kg: kgOf(m[3]) });
+      if (unit === 'm' || unit === 'km') push({ read: `${moveName(m[3])} ${m[1]} ${unit}`, sets, kg: kgOf(m[3]) });
+      else push({ read: unit ? `${moveName(m[3])} (cal)` : moveName(m[3]), reps: +m[1], sets: scheme ? 1 : sets, scheme: Array.isArray(scheme) ? scheme : null, kg: kgOf(m[3]) });
       continue;
     }
     // "Back squat x 8"
     m = raw.match(/^(.+?)\s*[x×]\s*(\d{1,3})\b(.*)$/i);
-    if (m && moveName(m[1])) { out.push({ read: moveName(m[1]), reps: +m[2], sets, kg: kgOf(m[3]) }); continue; }
+    if (m && moveName(m[1])) { push({ read: moveName(m[1]), reps: +m[2], sets, kg: kgOf(m[3]) }); continue; }
     // "Run 400m", "Row 1000 m"
     m = raw.match(/^(.+?)\s+(\d{2,5})\s*(m|km)\b/i);
-    if (m && moveName(m[1])) { out.push({ read: `${moveName(m[1])} ${m[2]} ${m[3].toLowerCase()}`, sets }); continue; }
+    if (m && moveName(m[1])) { push({ read: `${moveName(m[1])} ${m[2]} ${m[3].toLowerCase()}`, sets }); continue; }
     // A bullet with just a movement ("- Burpee over the dumbbell"), or a movement under a rep scheme ("21-15-9" then
     // "Thrusters", "Pull-ups").
-    if (((raw !== raw0 && /^[-•*–]/.test(raw0)) || Array.isArray(scheme)) && moveName(raw)) out.push({ read: moveName(raw), sets: scheme ? 1 : sets, scheme: Array.isArray(scheme) ? scheme : null });
+    if (((raw !== raw0 && /^[-•*–]/.test(raw0)) || Array.isArray(scheme)) && moveName(raw)) push({ read: moveName(raw), sets: scheme ? 1 : sets, scheme: Array.isArray(scheme) ? scheme : null });
   }
+  // Round by round: movements pushed while rounds or a rep scheme applied, two or more under the same one.
+  const n = {};
+  for (const mv of out) if (mv.blockAt != null && mv.inRounds) n[mv.blockAt] = (n[mv.blockAt] || 0) + 1;
+  for (const mv of out) { mv.group = mv.inRounds && n[mv.blockAt] > 1 ? 'w' + mv.blockAt : null; delete mv.block; delete mv.blockAt; delete mv.inRounds; }
   return out;
 }
 function parseWod(shot, acc) {
@@ -349,7 +366,9 @@ function parseWod(shot, acc) {
     if (/^\d{1,2}:\d{2}\b/.test(raw) && keep.length === 0) continue; // the phone's clock at the top
     keep.push(raw);
   }
-  acc.moves.push(...writtenMoves(keep));
+  // Round-by-round groups are per screenshot.
+  acc.shots = (acc.shots || 0) + 1;
+  acc.moves.push(...writtenMoves(keep).map((mv) => Object.assign(mv, { group: mv.group ? `${mv.group}-${acc.shots}` : null })));
   acc.notes.push(...keep.filter((x) => !WOD_SKIP.test(x)));
   if (/\b(AMRAP|EMOM|for time|rounds|WOD|metcon|crossfit)\b/i.test(shot.text)) acc.crossfit = true;
 }
@@ -358,7 +377,7 @@ function wodToMovements(acc, t) {
     const read = sentenceCase(mv.read.replace(/\s+/g, ' '));
     const sets = Array.isArray(mv.scheme) ? mv.scheme.map((r) => ({ reps: r, weightKg: mv.kg || null }))
       : Array.from({ length: Math.max(1, Math.min(mv.sets || 1, 30)) }, () => ({ reps: mv.reps || null, weightKg: mv.kg || null }));
-    return { importedName: read, name: ownMoveName(read, t), restSec: null, sets };
+    return { importedName: read, name: ownMoveName(read, t), restSec: null, sets, group: mv.group || null };
   });
 }
 

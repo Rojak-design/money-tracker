@@ -8,7 +8,9 @@
      workouts:          { id, date, typeId, type (the type's name), kind, durationMin, avgHr, calories, notes, source,
                           cardio?:    { distanceKm, timeSec, paceSecPerKm,
                                         intervals?: [ { distanceKm, timeSec, paceSecPerKm, restSec } ] (one per rep) },
-                          movements?: [ { name, restSec, sets: [ { reps, weightKg } ] } ] }
+                          movements?: [ { name, restSec, group, sets: [ { reps, weightKg } ] } ] }
+                          group: movements with the same group are done round by round (set 1 of each, then set 2
+                          of each…), e.g. 21-15-9 thrusters and pull-ups; null when done one after the other
                           restSec: rest between sets of that movement, in seconds (null if not given)
      bodyMeasurements:  { id, date, weightKg, heightCm, bodyFatPct }          one per day
      recoveryDays:      { id, date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, strain, bodyBattery, source,
@@ -246,7 +248,10 @@ function workoutSummary(w) {
     if (c.intervals && c.intervals.length) parts.push(intervalSummary(c.intervals, typeOfW(w)));
   }
   if (w.movements && w.movements.length) {
-    parts.push(w.movements.map((m) => m.name).join(', '));
+    // Round-by-round movements are joined with "+": "Thruster + Pull-up, Run 400 m".
+    const names = [];
+    w.movements.forEach((m, i) => { if (i && m.group && m.group === w.movements[i - 1].group) names[names.length - 1] += ' + ' + m.name; else names.push(m.name); });
+    parts.push(names.join(', '));
     parts.push(`${setCount(w)} set${setCount(w) === 1 ? '' : 's'}`);
     if (topWeight(w)) parts.push(`top ${fmt(topWeight(w), 1)} kg`);
   }
@@ -491,7 +496,8 @@ function workoutSheet(id, copyFrom, imp) {
   function addMove(m) {
     const el = document.createElement('div');
     el.className = 'move';
-    el.innerHTML = `<div class="move-head"><input class="mname" list="moveNames" placeholder="Movement, e.g. ${esc((typeOf(type).movements || [])[0] || 'Squat')}" aria-label="Movement" value="${esc(m ? m.name : '')}" autocomplete="off">
+    el.innerHTML = `<label class="check link-row"><input type="checkbox" class="mlink" ${m && m.linkPrev ? 'checked' : ''}> 🔗 Round by round with the movement above</label>
+      <div class="move-head"><input class="mname" list="moveNames" placeholder="Movement, e.g. ${esc((typeOf(type).movements || [])[0] || 'Squat')}" aria-label="Movement" value="${esc(m ? m.name : '')}" autocomplete="off">
         <button type="button" class="x-btn" aria-label="Remove movement">🗑</button></div>
       <label class="rest-row">Rest between sets <input class="rest" inputmode="decimal" data-fmt="rest" placeholder="e.g. 1:30" aria-label="Rest between sets (min:sec, or seconds)" value="${m && m.restSec ? fmtTime(m.restSec) : ''}" autocomplete="off"></label>
       <div class="set-row set-head"><span>Set</span><span>Reps</span><span>kg</span><span></span></div>
@@ -499,6 +505,11 @@ function workoutSheet(id, copyFrom, imp) {
       <button type="button" class="mini-btn add-set">+ Add set</button>`;
     const setsEl = $('.sets', el);
     $('.move-head .x-btn', el).addEventListener('click', () => el.remove());
+    // Linked to the movement above: done round by round (set 1 of each, then set 2 of each…).
+    const linkBox = $('.mlink', el);
+    const showLink = () => el.classList.toggle('linked', linkBox.checked);
+    linkBox.addEventListener('change', showLink);
+    showLink();
     // The name as read from a screenshot: if you change it, the new name is used for it next time.
     if (m && m.importedName) $('.mname', el).dataset.imported = m.importedName;
     // Picking a movement fills in the rest you used for it last time (if the box is still empty).
@@ -518,7 +529,7 @@ function workoutSheet(id, copyFrom, imp) {
     return el;
   }
   $('#wAddMove').addEventListener('click', () => $('.mname', addMove()).focus());
-  for (const m of (src && src.movements) || []) addMove(m);
+  ((src && src.movements) || []).forEach((m, i, all) => addMove(Object.assign({}, m, { linkPrev: !!(i && m.group && m.group === all[i - 1].group) })));
   setType(type);
   if (imp && imp.bind) imp.bind({ addRep });
 
@@ -572,6 +583,7 @@ function workoutSheet(id, copyFrom, imp) {
     }
     if (kind === 'strength') {
       const movements = [];
+      let group = null, groups = 0;
       for (const el of $$('#wMoves .move')) {
         const name = $('.mname', el).value.trim().replace(/\s+/g, ' ');
         const restSec = parseRest($('.rest', el).value);
@@ -592,8 +604,12 @@ function workoutSheet(id, copyFrom, imp) {
           if (!state.importAliases) state.importAliases = {};
           state.importAliases[imported.toLowerCase()] = name;
         }
-        movements.push({ name: matchName(name, t), restSec, sets });
+        // Ticked "round by round with the movement above": same group as it; otherwise a group of its own.
+        group = movements.length && $('.mlink', el).checked ? group : 'g' + ++groups;
+        movements.push({ name: matchName(name, t), restSec, group, sets });
       }
+      // A group with one movement is just that movement.
+      for (const mv of movements) if (movements.filter((x) => x.group === mv.group).length < 2) mv.group = null;
       w.movements = movements;
       // New movements are added to this type's list.
       if (!Array.isArray(t.movements)) t.movements = [];

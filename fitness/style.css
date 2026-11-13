@@ -236,3 +236,10 @@ label.imported input { border-color: var(--primary); }
 .pick-list { display: flex; flex-direction: column; gap: 8px; }
 
 .from-shots { display: flex; flex-direction: column; gap: 4px; margin-top: -4px; }
+
+/* Movements done round by round with the one above */
+.link-row { font-size: 13px; color: var(--muted); gap: 8px; }
+.link-row input { width: 18px; height: 18px; }
+#wMoves .move:first-child .link-row { display: none; }
+.move.linked { margin-top: -6px; border-top: 3px solid var(--primary); border-top-left-radius: 0; border-top-right-radius: 0; }
+.move.linked .link-row { color: var(--primary); font-weight: 600; }
