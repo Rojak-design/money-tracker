@@ -7,7 +7,7 @@ installed on your home screen. Plain HTML, CSS and JavaScript — no build step.
 - **Money** card: what you spent today and your net total (the same total as on the Accounts screen: bank accounts minus the card bills due this month / pay cycle). Tap it to open the money tracker.
 - **Habits, Fitness, Books / Music, Scheduler**: placeholders for modules to be built later.
 - **Export backup**: one file with everything in Rojak (restore it with Money → Backup → Import backup).
-- The avatar's hair colour changes every month (on the home screen and in the browser tab). The icon on your phone's home screen stays teal: phones don't let a web app change that after it's installed.
+- She and her cat peek over the top of the Money card. Every month her hair colour changes and the cat is a different breed (Siamese, Scottish Fold, Orange tabby, Persian, Calico, Maine Coon, Russian Blue, Bengal, Sphynx, Black cat, Tuxedo, Ragdoll). Each time you open the app she waves and blinks while the cat swishes its tail; tap either one to see it again. With Reduce Motion turned on, they stay still. The browser tab shows her with this month's hair; the icon on your phone's home screen stays teal (phones don't let a web app change it after it's installed).
 
 ## Shared data store
 The home screen and every module save through one store (`core/store.js`). Every entry (account, transaction,
@@ -54,7 +54,8 @@ On iPhone, the home-screen app and Safari keep separate data — use the home-sc
 - `index.html` – the Rojak home screen
 - `core/home.js`, `core/home.css` – home screen
 - `core/store.js` – the shared data store (IndexedDB), entry dates, backup export
-- `core/avatar.js` – the avatar icon and its monthly hair colours
+- `core/avatar.js` – her drawing, its monthly hair colours and her waving hand
+- `core/cat.js` – the cat and its monthly breeds
 - `money/` – the money tracker: `index.html`, `style.css`, `app.js` (accounts, transactions, categories, reconciliation, backup), `plan.js` (recurring payments, savings projects, trips and the forecast)
 - `money/ocr/` – Tesseract.js (Apache 2.0, licences included) for reading balances from screenshots; loaded only when you pick a screenshot
 - `manifest.json`, `sw.js`, `rojak-icon*`, `rojak-apple-touch-icon.png` – make it installable and work offline (`icon-v2.svg`, `apple-touch-icon-v2.png` are the money tracker's own tab icon)

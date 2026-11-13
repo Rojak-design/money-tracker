@@ -21,7 +21,7 @@ const HAIR_COLOURS = [
 const hairForMonth = (date = new Date()) => HAIR_COLOURS[date.getMonth()];
 
 let avatarCount = 0;
-// The avatar as SVG markup. bg: background colour ('none' for transparent). full: fill the square edge to edge
+// The avatar as SVG markup (used for the browser tab and the phone icons). bg: background colour ('none' for transparent). full: fill the square edge to edge
 // (for Android's "maskable" icon, which crops the corners).
 function avatarSVG(hair = hairForMonth(), { bg = '#dff3e6', full = false } = {}) {
   const id = 'rj' + (++avatarCount);
@@ -41,8 +41,9 @@ function avatarSVG(hair = hairForMonth(), { bg = '#dff3e6', full = false } = {})
     <path d="M73 42Q74.5 60 73.5 77H66.5Q69 60 67.5 44Z" fill="url(#${id})"/>
     <path d="M27.5 46C26.5 27 37 18.5 50 18.5S73.5 27 72.5 46Z" fill="url(#${id})"/>
     <path d="M36 25Q50 19 64 25M40 30V45M48 28V45M56 28V45" stroke="#fff" stroke-opacity=".2" stroke-width="1.2" fill="none" stroke-linecap="round"/>
-    <ellipse cx="42" cy="55" rx="3.1" ry="3.7" fill="#2b2f3a"/><ellipse cx="58" cy="55" rx="3.1" ry="3.7" fill="#2b2f3a"/>
-    <circle cx="43.2" cy="53.6" r="1.15" fill="#fff"/><circle cx="59.2" cy="53.6" r="1.15" fill="#fff"/>
+    <g class="eyes-open"><ellipse cx="42" cy="55" rx="3.1" ry="3.7" fill="#2b2f3a"/><ellipse cx="58" cy="55" rx="3.1" ry="3.7" fill="#2b2f3a"/>
+    <circle cx="43.2" cy="53.6" r="1.15" fill="#fff"/><circle cx="59.2" cy="53.6" r="1.15" fill="#fff"/></g>
+    <path class="eyes-shut" display="none" d="M39 55.5Q42 57.5 45 55.5M55 55.5Q58 57.5 61 55.5" stroke="#2b2f3a" stroke-width="1.6" fill="none" stroke-linecap="round"/>
     <ellipse cx="36.5" cy="62" rx="3.6" ry="2.1" fill="#f59aa0" opacity=".55"/><ellipse cx="63.5" cy="62" rx="3.6" ry="2.1" fill="#f59aa0" opacity=".55"/>
     <path d="M49.3 58.5Q48.6 60.4 50.2 60.8" stroke="${shade}" stroke-width="1.1" fill="none" stroke-linecap="round"/>
     <path d="M46 65Q50 68.3 54 65" stroke="#c4646b" stroke-width="1.7" fill="none" stroke-linecap="round"/>`;
@@ -51,6 +52,24 @@ function avatarSVG(hair = hairForMonth(), { bg = '#dff3e6', full = false } = {})
   const body = full ? `<g transform="translate(10 10) scale(.8)">${art}</g>` : `<g clip-path="url(#${id}c)">${art}</g>`;
   const clip = full ? '' : `<clipPath id="${id}c"><rect width="100" height="100" rx="22"/></clipPath>`;
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs>${clip}</defs>${back}${body}</svg>`;
+}
+
+// Her as a cut-out figure for the home screen: no background or square, cut off exactly at y = 100, which sits on
+// the top edge of the Money card. Includes her waving hand, hidden below the edge until she waves.
+function avatarFigure(hair = hairForMonth()) {
+  const skin = '#f8d9c6', line = '#ecc0a8';
+  const id = 'rf' + (++avatarCount);
+  const art = avatarSVG(hair, { bg: 'none' }).replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '')
+    .replace(/<defs><clipPath[^]*?<\/clipPath><\/defs>/, '').replace(/ clip-path="[^"]*"/, '');
+  const hand = `<g class="arm-lift" transform="translate(0 45)"><g class="arm-wave">
+      <path d="M90 95Q91.5 84 92 75" stroke="${skin}" stroke-width="8" stroke-linecap="round" fill="none"/>
+      <rect x="86.6" y="64" width="10.8" height="11.5" rx="5" fill="${skin}"/>
+      <path d="M88.6 66V61.6M91.2 65.4V60.2M93.8 65.4V60.6M96.3 66.5V62.6" stroke="${skin}" stroke-width="2.3" stroke-linecap="round"/>
+      <path d="M87 71.5Q84.3 69.5 84.6 67" stroke="${skin}" stroke-width="2.4" stroke-linecap="round" fill="none"/>
+      <path d="M89 72.5Q92 73.8 95 72.5" stroke="${line}" stroke-width=".8" fill="none" stroke-linecap="round"/></g></g>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" overflow="visible">
+    <defs><clipPath id="${id}"><rect x="-20" y="-20" width="140" height="120"/></clipPath></defs>
+    <g clip-path="url(#${id})">${art}${hand}</g></svg>`;
 }
 
 // Puts this month's avatar in the browser tab.
