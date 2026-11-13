@@ -133,7 +133,8 @@ function firstNumber(s, asHours) {
 }
 // A line without the icons read as letters before it ("»~7 Warm Up" → "Warm Up"), and common misreadings fixed
 // ("Al." → "A1.", "IRM" → "1RM").
-const cleanLine = (s) => s.replace(/^[^A-Za-z0-9(+@-]+\d?\s*(?=[A-Za-z]|\d+\s+(?:alternating|sets|rounds))/, '').replace(/^[^A-Za-z0-9(+@-]+/, '')
+// An icon read as a digit touches it ("»~7 Warm Up"); a real number has a space before it ("® 4 sets of 3 reps").
+const cleanLine = (s) => s.replace(/^[^A-Za-z0-9\s]+\s+(?=[A-Z][0-9]?[.,)]\s)/, '').replace(/^[^A-Za-z0-9\s(+@-]+\d?\s*(?=[A-Za-z]|\d+\s+(?:alternating|sets|rounds))/, '').replace(/^[^A-Za-z0-9(+@-]+/, '')
   .replace(/^([A-Z])[lI|]([.)])/, '$11$2').replace(/\bIRM\b/g, '1RM').replace(/\s+[@®©]$/, '').replace(/\s+/g, ' ').trim();
 const sentenceCase = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 // A movement name as you call it: renamed before (see importAliases), or one you already have (also matching
@@ -291,12 +292,12 @@ function setsToMovements(acc, t) {
 /* ---------- Written workouts: WodUp, Instagram posts, competition sheets… ---------- */
 // Lines that are instructions or app buttons, not movements (kept out of the notes too where they're buttons).
 const WOD_SKIP = /^(log\s*result|leaderboard|view warm ?up|warm ?up|show (less|more)|scoring|comments?|like|reply|view all|liked by|share|save)\b/i;
-const NOT_MOVE = /^(rest|sets?|rounds?|reps?|minutes?|mins?|seconds?|secs?|for time|time cap|cap|every|then|each|with|build|scoring|score|notes?|tempo|rpe|and|or|of|at|in|on|the|a|an|total|weeks?|day|warm|cool)\b/i;
+const NOT_MOVE = /^(rest|sets?|rounds?|reps?|minutes?|mins?|seconds?|secs?|for time|time cap|cap|every|then|each|with|build|scoring|score|notes?|tempo|rpe|and|or|of|at|in|on|the|a|an|total|weeks?|day|warm|cool|metcon|wod|skill|accessory|finisher|conditioning|strength|part|ascending|descending|ladder|pause|find)\b/i;
 const KG = /(\d+(?:[.,]\d+)?)\s*(kgs?|lbs?|#)(?![a-z])/i;
 // A movement name as written: letters (and - ' /), 2–6 words, not an instruction.
-function moveName(raw) {
+function moveName(raw, maxWords = 6) {
   const n = raw.replace(/\(.*?\)/g, '').replace(KG, '').replace(/\b\d+(?:[.,]\d+)?\s*\/\s*/g, '').replace(/@.*$/, '').replace(/[:;,.!]+$/, '').replace(/\s+/g, ' ').trim();
-  if (!/^[A-Za-z][A-Za-z' /-]{1,48}[A-Za-z]$/.test(n) || n.split(' ').length > 6 || NOT_MOVE.test(n)) return null;
+  if (!/^[A-Za-z][A-Za-z' /-]{1,70}[A-Za-z]$/.test(n) || n.split(' ').length > maxWords || NOT_MOVE.test(n)) return null;
   return n;
 }
 const kgOf = (raw) => { const m = raw.match(KG); if (!m) return null; const v = toNum(m[1]); return /lb|#/i.test(m[2]) ? round(v * 0.45359, 1) : v; };
@@ -306,16 +307,33 @@ const kgOf = (raw) => { const m = raw.match(KG); if (!m) return null; const v = 
 function writtenMoves(lines) {
   const out = [];
   let sets = 1, scheme = null, block = 0, circuit = false;
-  const push = (mv) => out.push(Object.assign(mv, { blockAt: block, inRounds: !!(scheme || sets > 1 || circuit) && !(mv.sets > 1 && mv.reps && !scheme && mv.sets !== sets) }));
+  const push = (mv) => out.push(Object.assign({ blockAt: block }, mv, { inRounds: !!(scheme || sets > 1 || circuit) && !(mv.sets > 1 && mv.reps && !scheme && mv.sets !== sets) }));
+  // A heading that names the movement ("A. Segmented Clean Pull", "B. Power Clean + Clean"), waiting for the line
+  // with its sets and reps ("4 sets of 3 reps", "6 sets of @ 80%"). It may wrap onto the next line.
+  let heading = null, headingOpen = false;
   for (const raw0 of lines) {
-    if (!raw0 || WOD_SKIP.test(raw0) || /^[+#]/.test(raw0)) continue;
+    if (!raw0 || WOD_SKIP.test(raw0) || /^[+#]/.test(raw0)) { headingOpen = false; continue; }
+    let m = raw0.match(/^(\d{1,2})\s+(?:sets|rounds)\s+of\s*(?:(\d{1,3})\s*(?:reps?|x)\b)?/i);
+    if (m && heading) {
+      // Each part of a complex ("Power Clean + Clean") is a movement, done together in every set.
+      const names = heading.split(/\s*\+\s*/).map((x) => moveName(x, 10)).filter(Boolean);
+      block++;
+      for (const n of names) out.push({ read: n, sets: +m[1], reps: m[2] ? +m[2] : null, kg: kgOf(raw0), blockAt: block, inRounds: names.length > 1 });
+      heading = null; headingOpen = false;
+      continue;
+    }
+    const hd = raw0.match(/^[A-Z][0-9]?[.,)]\s+([A-Za-z][^0-9]*)$/);
+    if (hd && hd[1].split(/\s*\+\s*/).every((x) => moveName(x, 10))) { heading = hd[1].trim(); headingOpen = true; sets = 1; scheme = null; circuit = false; block++; continue; }
+    if (heading && headingOpen && /^[A-Za-z][A-Za-z' -]+$/.test(raw0) && moveName(heading + ' ' + raw0, 10)) { heading += ' ' + raw0; headingOpen = false; continue; }
+    headingOpen = false;
+    if (heading && /^rest\b/i.test(raw0)) continue;
     // "5 rounds for time", "5 alternating sets of:", "3 rds"
-    let m = raw0.match(/(\d+)\s+(?:alternating\s+)?(?:sets|rounds|rds)\b/i);
+    m = raw0.match(/(\d+)\s+(?:alternating\s+)?(?:sets|rounds|rds)\b/i);
     if (m && !/^\d+\s*x/i.test(raw0)) { sets = +m[1]; scheme = null; circuit = false; block++; continue; }
     // "AMRAP 12 min", "EMOM 10", "For time:" — the movements below are done round by round.
     if (/\b(AMRAP|EMOM|E\d+MOM)\b|^\W*for time\W*$/i.test(raw0) && !/^\d+\s+\w/.test(raw0)) { if (!scheme) { circuit = true; block++; } continue; }
     // A new part ("B.", "Part 2", "Metcon") starts again with one set.
-    if (/^(?:[A-Z][.)]|part\s+\d|metcon|strength|skill|accessory)\b/i.test(raw0) && !/^[A-Z][.)]\s*\d/.test(raw0)) { sets = 1; scheme = null; circuit = false; block++; }
+    if (/^(?:[A-Z][.,)]|part\s+\d|metcon|strength|skill|accessory)(?:\s|$)/i.test(raw0) && !/^[A-Z][.,)]\s*\d/.test(raw0)) { sets = 1; scheme = null; circuit = false; block++; heading = null; }
     // Leave out part labels and bullets: "A1.", "B)", "1.", "-", "•".
     const raw = raw0.replace(/^(?:[A-Z][0-9]?[.)]|\d{1,2}[.)](?!\d)|[-•*–])\s*/, '').trim();
     // "21-15-9 thrusters, pull-ups" / "2-4-6-8-10-..." (a ladder: reps not known)
@@ -368,6 +386,11 @@ function parseWod(shot, acc) {
   }
   // Round-by-round groups are per screenshot.
   acc.shots = (acc.shots || 0) + 1;
+  if (!acc.typeId) {
+    const named = keep.slice(0, 4).join(' ');
+    const t = state.workoutTypes.find((x) => x.id !== 'crossfit' && x.kind === 'strength' && new RegExp(`\\b${x.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(named));
+    if (t) acc.typeId = t.id;
+  }
   acc.moves.push(...writtenMoves(keep).map((mv) => Object.assign(mv, { group: mv.group ? `${mv.group}-${acc.shots}` : null })));
   acc.notes.push(...keep.filter((x) => !WOD_SKIP.test(x)));
   if (/\b(AMRAP|EMOM|for time|rounds|WOD|metcon|crossfit)\b/i.test(shot.text)) acc.crossfit = true;
@@ -577,7 +600,7 @@ async function review(shots) {
     const wodFirst = { moves: [], notes: [] };
     for (const s of workoutShots) if (s.kind === 'wod') parseWod(s, wodFirst);
     const key = kinds.has('garminStrength') ? 'strength' : kinds.has('wod') ? (wodFirst.crossfit ? 'crossfit' : activityKey(text) === 'crossfit' ? 'crossfit' : 'strength') : activityKey(text) || 'run';
-    const t = findType(key);
+    const t = (wodFirst.typeId && state.workoutTypes.find((x) => x.id === wodFirst.typeId)) || findType(key);
     const draft = { typeId: t.id, type: t.name, kind: t.kind, date: findDate(text), notes: '', durationMin: null, avgHr: null, calories: null };
     const tips = [];
     let laps = null;
