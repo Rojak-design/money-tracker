@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-title" content="Fitness">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <!-- When app files change, bump ?v= here, in index.html, money/index.html and the version in sw.js (keep them all the same). -->
-  <link rel="stylesheet" href="style.css?v=38">
+  <link rel="stylesheet" href="style.css?v=42">
 </head>
 <body>
   <header class="topbar">
@@ -25,7 +25,7 @@
   <main>
     <!-- WORKOUTS: every workout, newest first -->
     <section id="view-workouts" class="view active">
-      <div class="view-head"><button type="button" class="link-btn" id="typesBtn">Workout types ›</button></div>
+      <div class="view-head"><button type="button" class="link-btn import-btn" data-import>📷 Import screenshots</button><button type="button" class="link-btn" id="typesBtn">Workout types ›</button></div>
       <div id="workoutList" class="list"></div>
     </section>
 
@@ -37,6 +37,7 @@
 
     <!-- RECOVERY: recovery score, HRV, resting heart rate, sleep, strain -->
     <section id="view-recovery" class="view">
+      <div class="view-head"><button type="button" class="link-btn import-btn" data-import>📷 Import from Whoop / Garmin</button></div>
       <div id="recoveryLatest"></div>
       <div id="recoveryList" class="list"></div>
     </section>
@@ -64,7 +65,8 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="../core/store.js?v=38"></script>
-  <script src="app.js?v=38"></script>
+  <script src="../core/store.js?v=42"></script>
+  <script src="app.js?v=42"></script>
+  <script src="import.js?v=42"></script>
 </body>
 </html>

@@ -5,13 +5,17 @@
      workoutTypes:      { id, name, icon, kind, pace, movements: [names], hidden }  your workout types, in the
                           order shown; kind is what's logged: 'cardio' (distance & pace), 'strength' (movements &
                           sets) or 'other' (time & notes)
-     workouts:          { id, date, typeId, type (the type's name), kind, durationMin, notes, source,
-                          cardio?:    { distanceKm, timeSec, paceSecPerKm, avgHr,
+     workouts:          { id, date, typeId, type (the type's name), kind, durationMin, avgHr, calories, notes, source,
+                          cardio?:    { distanceKm, timeSec, paceSecPerKm,
                                         intervals?: [ { distanceKm, timeSec, paceSecPerKm, restSec } ] (one per rep) },
-                          movements?: [ { name, restSec, sets: [ { reps, weightKg } ] } ] }
+                          movements?: [ { name, restSec, group, sets: [ { reps, weightKg } ] } ] }
+                          group: movements with the same group are done round by round (set 1 of each, then set 2
+                          of each…), e.g. 21-15-9 thrusters and pull-ups; null when done one after the other
                           restSec: rest between sets of that movement, in seconds (null if not given)
      bodyMeasurements:  { id, date, weightKg, heightCm, bodyFatPct }          one per day
-     recoveryDays:      { id, date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, strain, source }  one per day
+     recoveryDays:      { id, date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, strain, bodyBattery, source,
+                          sources: { field: 'Whoop' | 'Garmin' } for numbers read from a screenshot }  one per day
+     importAliases:     { 'name as read from a screenshot (lower case)': 'your movement name' }
    Numbers left empty are saved as null. */
 'use strict';
 
@@ -65,6 +69,10 @@ function migrate() {
     changed = true;
   }
   if ('movementNames' in state) { delete state.movementNames; changed = true; }
+  // Average heart rate is now kept for every workout (it was only on distance workouts).
+  for (const w of state.workouts) {
+    if (w.cardio && 'avgHr' in w.cardio) { if (w.avgHr == null) w.avgHr = w.cardio.avgHr; delete w.cardio.avgHr; changed = true; }
+  }
   // Workouts saved before types had ids get their type's id (HIIT is now Functional).
   for (const w of state.workouts) {
     if (w.typeId && state.workoutTypes.some((t) => t.id === w.typeId)) continue;
@@ -238,13 +246,17 @@ function workoutSummary(w) {
     if (c.distanceKm != null) parts.push(fmtDist(c.distanceKm, typeOfW(w)));
     if (c.paceSecPerKm) parts.push(fmtPace(c.paceSecPerKm, how, true));
     if (c.intervals && c.intervals.length) parts.push(intervalSummary(c.intervals, typeOfW(w)));
-    if (c.avgHr) parts.push(`${c.avgHr} bpm`);
   }
   if (w.movements && w.movements.length) {
-    parts.push(w.movements.map((m) => m.name).join(', '));
+    // Round-by-round movements are joined with "+": "Thruster + Pull-up, Run 400 m".
+    const names = [];
+    w.movements.forEach((m, i) => { if (i && m.group && m.group === w.movements[i - 1].group) names[names.length - 1] += ' + ' + m.name; else names.push(m.name); });
+    parts.push(names.join(', '));
     parts.push(`${setCount(w)} set${setCount(w) === 1 ? '' : 's'}`);
     if (topWeight(w)) parts.push(`top ${fmt(topWeight(w), 1)} kg`);
   }
+  if (w.avgHr) parts.push(`${w.avgHr} bpm`);
+  if (w.calories) parts.push(`${fmt(w.calories, 0)} kcal`);
   if (!parts.length && w.notes) parts.push(w.notes);
   return parts.join(' · ');
 }
@@ -285,15 +297,18 @@ function renderWorkouts() {
 }
 
 // Add or edit a workout. `copyFrom` starts a new workout from an earlier one (same type, movements and sets).
-function workoutSheet(id, copyFrom) {
+// `imp` (from a screenshot import): copyFrom is the workout read from the screenshots; imp.banner is shown at the
+// top, imp.bind({ addRep }) wires it up, imp.onDone() runs after saving.
+function workoutSheet(id, copyFrom, imp) {
   const existing = id ? state.workouts.find((w) => w.id === id) : null;
   const src = existing || copyFrom || null;
   // `type` is the id of the workout type picked in the form.
   let type = src ? typeOfW(src).id : (state.workoutTypes.find((t) => !t.hidden) || typeOf('')).id;
   const c = (src && src.cardio) || {};
-  openSheet(existing ? 'Edit workout' : 'New workout', `
+  openSheet(existing ? 'Edit workout' : imp ? 'Check imported workout' : 'New workout', `
     <form class="form" id="wForm" novalidate>
-      <label>Date <input type="date" id="wDate" value="${esc(existing ? existing.date : today())}" required></label>
+      ${imp ? imp.banner : ''}
+      <label>Date <input type="date" id="wDate" value="${esc(existing ? existing.date : imp && src.date ? src.date : today())}" required></label>
       <div><div class="small" style="font-weight:600;margin-bottom:6px">Type</div>
         <div class="types" id="wTypes">${state.workoutTypes.filter((t) => !t.hidden || t.id === type)
           .map((t) => `<button type="button" data-t="${esc(t.id)}">${esc(t.icon)} ${esc(t.name)}</button>`).join('')}</div>
@@ -305,7 +320,6 @@ function workoutSheet(id, copyFrom) {
           <label><span id="wDistLabel">Distance (km)</span><input id="wDist" inputmode="decimal" autocomplete="off"></label>
           <label>Time <input id="wTime" inputmode="decimal" data-fmt="time" placeholder="e.g. 28:36" autocomplete="off"></label>
           <label><span id="wPaceLabel">Pace (min:sec /km)</span><input id="wPace" inputmode="decimal" data-fmt="pace" autocomplete="off"></label>
-          <label>Avg heart rate <input id="wHr" inputmode="numeric" placeholder="bpm" autocomplete="off"></label>
         </div>
         <div class="hint">Fill in any two of distance, time and pace — the third is worked out. Times can be typed with a dot instead of ":" (28.36 = 28:36).</div>
         <div id="wIntWrap" class="form" style="gap:8px">
@@ -324,6 +338,13 @@ function workoutSheet(id, copyFrom) {
         <datalist id="moveNames"></datalist>
       </div>
 
+      <div class="grid2">
+        <label>Avg heart rate <input id="wHr" inputmode="numeric" placeholder="bpm" autocomplete="off"></label>
+        <label>Calories <input id="wCal" inputmode="numeric" placeholder="kcal" autocomplete="off"></label>
+      </div>
+      <div class="from-shots"><button type="button" class="mini-btn" id="wFromShots">📷 Add numbers from screenshots</button>
+        <div class="hint">e.g. average heart rate and calories from Garmin or Whoop for a WodUp workout. Only fills what's empty.</div>
+        <div id="wFromShotsInfo" class="hint"></div></div>
       <label id="wDurWrap">Duration (minutes) <input id="wDur" inputmode="numeric" autocomplete="off" placeholder="e.g. 45"></label>
       <label>Notes <textarea id="wNotes" placeholder="How did it feel? Where?">${esc(src ? src.notes : '')}</textarea></label>
       <button class="btn" type="submit">${existing ? 'Save changes' : 'Save workout'}</button>
@@ -361,7 +382,10 @@ function workoutSheet(id, copyFrom) {
   if (c.distanceKm != null) fields.dist.value = showDistFor(c.distanceKm, typeOf(type));
   if (c.timeSec) fields.time.value = fmtTime(c.timeSec);
   if (c.paceSecPerKm) fields.pace.value = fmtPace(c.paceSecPerKm, typeOf(type).pace);
-  if (c.avgHr) $('#wHr').value = c.avgHr;
+  // Heart rate and calories belong to one session: kept when editing or importing, not when logging again.
+  const own = existing || (imp ? src : null);
+  if (own && (own.avgHr || c.avgHr)) $('#wHr').value = own.avgHr || c.avgHr;
+  if (own && own.calories) $('#wCal').value = own.calories;
   // A duration worked out from the cardio time isn't shown, so it follows the time if that changes.
   if (src && src.durationMin && !(c.timeSec && src.durationMin === Math.round(c.timeSec / 60))) $('#wDur').value = src.durationMin;
   // Editing a saved workout: changing the distance or time updates the pace.
@@ -472,7 +496,8 @@ function workoutSheet(id, copyFrom) {
   function addMove(m) {
     const el = document.createElement('div');
     el.className = 'move';
-    el.innerHTML = `<div class="move-head"><input class="mname" list="moveNames" placeholder="Movement, e.g. ${esc((typeOf(type).movements || [])[0] || 'Squat')}" aria-label="Movement" value="${esc(m ? m.name : '')}" autocomplete="off">
+    el.innerHTML = `<label class="check link-row"><input type="checkbox" class="mlink" ${m && m.linkPrev ? 'checked' : ''}> 🔗 Round by round with the movement above</label>
+      <div class="move-head"><input class="mname" list="moveNames" placeholder="Movement, e.g. ${esc((typeOf(type).movements || [])[0] || 'Squat')}" aria-label="Movement" value="${esc(m ? m.name : '')}" autocomplete="off">
         <button type="button" class="x-btn" aria-label="Remove movement">🗑</button></div>
       <label class="rest-row">Rest between sets <input class="rest" inputmode="decimal" data-fmt="rest" placeholder="e.g. 1:30" aria-label="Rest between sets (min:sec, or seconds)" value="${m && m.restSec ? fmtTime(m.restSec) : ''}" autocomplete="off"></label>
       <div class="set-row set-head"><span>Set</span><span>Reps</span><span>kg</span><span></span></div>
@@ -480,6 +505,13 @@ function workoutSheet(id, copyFrom) {
       <button type="button" class="mini-btn add-set">+ Add set</button>`;
     const setsEl = $('.sets', el);
     $('.move-head .x-btn', el).addEventListener('click', () => el.remove());
+    // Linked to the movement above: done round by round (set 1 of each, then set 2 of each…).
+    const linkBox = $('.mlink', el);
+    const showLink = () => el.classList.toggle('linked', linkBox.checked);
+    linkBox.addEventListener('change', showLink);
+    showLink();
+    // The name as read from a screenshot: if you change it, the new name is used for it next time.
+    if (m && m.importedName) $('.mname', el).dataset.imported = m.importedName;
     // Picking a movement fills in the rest you used for it last time (if the box is still empty).
     $('.mname', el).addEventListener('change', () => {
       const restEl = $('.rest', el);
@@ -497,8 +529,9 @@ function workoutSheet(id, copyFrom) {
     return el;
   }
   $('#wAddMove').addEventListener('click', () => $('.mname', addMove()).focus());
-  for (const m of (src && src.movements) || []) addMove(m);
+  ((src && src.movements) || []).forEach((m, i, all) => addMove(Object.assign({}, m, { linkPrev: !!(i && m.group && m.group === all[i - 1].group) })));
   setType(type);
+  if (imp && imp.bind) imp.bind({ addRep });
 
   $('#wForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -507,16 +540,19 @@ function workoutSheet(id, copyFrom) {
     const t = typeOf(type), kind = t.kind;
     let durationMin = kind === 'cardio' ? null : num($('#wDur').value);
     if (isNaN(durationMin) || durationMin < 0 || durationMin > 1440) return toast('Check the duration (minutes)');
+    const hr = num($('#wHr').value), cal = num($('#wCal').value);
+    if (Number.isNaN(hr) || (hr != null && (hr < 30 || hr > 230))) return toast('Check the heart rate (bpm)');
+    if (Number.isNaN(cal) || (cal != null && (cal < 0 || cal > 10000))) return toast('Check the calories (kcal)');
     const w = { id: existing ? existing.id : uid(), date, typeId: t.id, type: t.name, kind, durationMin: durationMin == null ? null : round(durationMin, 0),
+      avgHr: hr == null ? null : Math.round(hr), calories: cal == null ? null : Math.round(cal),
       notes: $('#wNotes').value.trim(), source: existing ? existing.source || 'manual' : 'manual' };
 
     if (kind === 'cardio') {
-      const d = readDist(), t = parseTime(fields.time.value), p = parsePace(fields.pace.value, how()), hr = num($('#wHr').value);
+      const d = readDist(), t = parseTime(fields.time.value), p = parsePace(fields.pace.value, how());
       if (Number.isNaN(d) || (d != null && (d <= 0 || d > 1000))) return toast('Check the distance');
       if (Number.isNaN(t) || (t != null && t <= 0)) return toast('Type the time as mm:ss or h:mm:ss');
       if (Number.isNaN(p)) return toast(how() === 'speed' ? 'Check the speed' : 'Type the pace as min:sec, e.g. 5:30');
-      if (Number.isNaN(hr) || (hr != null && (hr < 30 || hr > 230))) return toast('Check the heart rate (bpm)');
-      const cardio = { distanceKm: d == null ? null : round(d, 3), timeSec: t, paceSecPerKm: p == null ? null : Math.round(p), avgHr: hr == null ? null : Math.round(hr) };
+      const cardio = { distanceKm: d == null ? null : round(d, 3), timeSec: t, paceSecPerKm: p == null ? null : Math.round(p) };
       // Intervals: skip empty rows, check the rest, and work out each rep's missing value.
       const reps = [];
       for (const [i, r] of readReps(how(), intUnit()).entries()) {
@@ -547,6 +583,7 @@ function workoutSheet(id, copyFrom) {
     }
     if (kind === 'strength') {
       const movements = [];
+      let group = null, groups = 0;
       for (const el of $$('#wMoves .move')) {
         const name = $('.mname', el).value.trim().replace(/\s+/g, ' ');
         const restSec = parseRest($('.rest', el).value);
@@ -561,9 +598,18 @@ function workoutSheet(id, copyFrom) {
         }
         if (!name && !sets.length) continue;
         if (!name) return toast('Give each movement a name');
-        if (!sets.length) return toast(`Add at least one set for ${name}`);
-        movements.push({ name: matchName(name, t), restSec, sets });
+        // Remember a movement renamed after an import, so the next import uses your name.
+        const imported = $('.mname', el).dataset.imported;
+        if (imported && !sameName(imported, name)) {
+          if (!state.importAliases) state.importAliases = {};
+          state.importAliases[imported.toLowerCase()] = name;
+        }
+        // Ticked "round by round with the movement above": same group as it; otherwise a group of its own.
+        group = movements.length && $('.mlink', el).checked ? group : 'g' + ++groups;
+        movements.push({ name: matchName(name, t), restSec, group, sets });
       }
+      // A group with one movement is just that movement.
+      for (const mv of movements) if (movements.filter((x) => x.group === mv.group).length < 2) mv.group = null;
       w.movements = movements;
       // New movements are added to this type's list.
       if (!Array.isArray(t.movements)) t.movements = [];
@@ -571,10 +617,12 @@ function workoutSheet(id, copyFrom) {
     }
 
     if (existing) Object.keys(existing).forEach((k) => { if (!(k in w) && k !== 'savedAt' && k !== 'updatedAt') delete existing[k]; });
+    if (imp) w.source = imp.source;
     if (existing) Object.assign(existing, w); else state.workouts.push(w);
     await save();
     closeSheet(); render();
     toast(existing ? 'Workout updated' : 'Workout saved 💪');
+    if (imp && imp.onDone) imp.onDone();
   });
 
   if (existing) {
@@ -799,8 +847,9 @@ const RECOVERY_FIELDS = [
   { key: 'hrvMs', label: 'HRV', unit: 'ms', min: 1, max: 300, dp: 0, ph: 'e.g. 65' },
   { key: 'restingHr', label: 'Resting heart rate', unit: 'bpm', min: 25, max: 150, dp: 0, ph: 'e.g. 54' },
   { key: 'sleepHours', label: 'Sleep', unit: 'hours', min: 0, max: 24, dp: 2, ph: 'e.g. 7:30' },
-  { key: 'sleepScore', label: 'Sleep score', unit: '%', min: 0, max: 100, dp: 0, ph: 'e.g. 85' },
-  { key: 'strain', label: 'Strain', unit: '0–21', min: 0, max: 21, dp: 1, ph: 'e.g. 12.4' }
+  { key: 'sleepScore', label: 'Sleep quality', unit: '% (Whoop sleep performance, Garmin sleep score)', min: 0, max: 100, dp: 0, ph: 'e.g. 85' },
+  { key: 'strain', label: 'Strain', unit: '0–21', min: 0, max: 21, dp: 1, ph: 'e.g. 12.4' },
+  { key: 'bodyBattery', label: 'Body Battery', unit: '0–100 (Garmin)', min: 0, max: 100, dp: 0, ph: 'e.g. 48' }
 ];
 // Whoop's colours for the recovery score: green 67+, yellow 34–66, red below.
 const recoveryColor = (s) => (s == null ? '' : s >= 67 ? 'var(--good)' : s >= 34 ? '#d49b00' : 'var(--danger)');
@@ -828,7 +877,7 @@ function renderRecovery() {
   list.innerHTML = rs.map((r) => {
     const sub = [r.hrvMs != null ? `HRV ${fmt(r.hrvMs, 0)} ms` : '', r.restingHr != null ? `RHR ${fmt(r.restingHr, 0)}` : '',
       r.sleepHours != null ? `Sleep ${fmtSleep(r.sleepHours)}${r.sleepScore != null ? ` (${fmt(r.sleepScore, 0)}%)` : ''}` : r.sleepScore != null ? `Sleep ${fmt(r.sleepScore, 0)}%` : '',
-      r.strain != null ? `Strain ${fmt(r.strain, 1)}` : ''].filter(Boolean).join(' · ');
+      r.strain != null ? `Strain ${fmt(r.strain, 1)}` : '', r.bodyBattery != null ? `Body Battery ${fmt(r.bodyBattery, 0)}` : ''].filter(Boolean).join(' · ');
     return `<button class="item" data-r="${r.id}">
       <span class="ico" aria-hidden="true">🔋</span>
       <div class="left"><div class="title">${esc(niceDate(r.date))}</div><div class="sub">${esc(sub) || '&nbsp;'}</div></div>
@@ -836,15 +885,25 @@ function renderRecovery() {
   }).join('');
   $$('[data-r]', list).forEach((el) => el.addEventListener('click', () => recoverySheet(el.dataset.r)));
 }
-function recoverySheet(id) {
-  const existing = id ? state.recoveryDays.find((r) => r.id === id) : null;
-  const val = (f) => { const v = existing && existing[f.key]; if (v == null) return ''; if (f.key !== 'sleepHours') return v; const m = Math.round(v * 60); return `${Math.floor(m / 60)}:${pad(m % 60)}`; };
-  openSheet(existing ? 'Edit recovery' : 'Recovery', `
+// Add or edit a day's recovery. `imp` (from a screenshot import): { date, values: {field: number}, notes: {field: text},
+// source: {field: 'Whoop'|'Garmin'}, banner, onDone }. The numbers read go over that day's entry, if there is one.
+function recoverySheet(id, imp) {
+  const existing = id ? state.recoveryDays.find((r) => r.id === id) : imp ? state.recoveryDays.find((r) => r.date === imp.date) : null;
+  const show = (f, v) => { if (v == null) return ''; if (f.key !== 'sleepHours') return v; const m = Math.round(v * 60); return `${Math.floor(m / 60)}:${pad(m % 60)}`; };
+  const val = (f) => show(f, imp && imp.values[f.key] != null ? imp.values[f.key] : existing && existing[f.key]);
+  // Under each number read from a screenshot: where it came from, and what it was before.
+  const note = (f) => {
+    if (!imp || imp.values[f.key] == null) return '';
+    const was = existing && existing[f.key] != null && existing[f.key] !== imp.values[f.key] ? ` · was ${show(f, existing[f.key])}` : '';
+    return `<span class="from">📷 ${esc(imp.notes[f.key] || 'from screenshot')}${esc(was)}</span>`;
+  };
+  openSheet(imp ? 'Check imported recovery' : existing ? 'Edit recovery' : 'Recovery', `
     <form class="form" id="rForm" novalidate>
-      <label>Date <input type="date" id="rDate" value="${esc(existing ? existing.date : today())}" required></label>
+      ${imp ? imp.banner : ''}
+      <label>Date <input type="date" id="rDate" value="${esc(imp ? imp.date : existing ? existing.date : today())}" required></label>
       <div class="grid2">
-        ${RECOVERY_FIELDS.map((f) => `<label>${f.label} <span class="hint">${f.key === 'sleepHours' ? 'h:mm or hours' : f.unit}</span>
-          <input id="r_${f.key}" inputmode="${f.key === 'sleepHours' ? 'text' : 'decimal'}" placeholder="${f.ph}" value="${esc(val(f))}" autocomplete="off"></label>`).join('')}
+        ${RECOVERY_FIELDS.map((f) => `<label${imp && imp.values[f.key] != null ? ' class="imported"' : ''}>${f.label} <span class="hint">${f.key === 'sleepHours' ? 'h:mm or hours' : f.unit}</span>
+          <input id="r_${f.key}" inputmode="${f.key === 'sleepHours' ? 'text' : 'decimal'}" placeholder="${f.ph}" value="${esc(val(f))}" autocomplete="off">${note(f)}</label>`).join('')}
       </div>
       <div class="hint">Fill in whatever your watch or app shows; empty boxes are fine.</div>
       <button class="btn" type="submit">${existing ? 'Save changes' : 'Save'}</button>
@@ -854,7 +913,10 @@ function recoverySheet(id) {
     e.preventDefault();
     const date = $('#rDate').value;
     if (!date) return toast('Pick a date');
-    const entry = { date, source: existing ? existing.source || 'manual' : 'manual' };
+    const entry = { date, source: existing ? existing.source || 'manual' : imp ? 'screenshot' : 'manual' };
+    // Which numbers came from Whoop or Garmin (kept for numbers not changed since).
+    if (existing && existing.sources) entry.sources = Object.assign({}, existing.sources);
+    if (imp) for (const [k, src] of Object.entries(imp.source || {})) (entry.sources || (entry.sources = {}))[k] = src;
     for (const f of RECOVERY_FIELDS) {
       const raw = $('#r_' + f.key).value;
       const n = f.key === 'sleepHours' ? parseSleep(raw) : num(raw);
@@ -865,6 +927,7 @@ function recoverySheet(id) {
     if (!(await saveDaily('recoveryDays', existing, entry, 'recovery entry'))) return;
     closeSheet(); render();
     toast('Saved');
+    if (imp && imp.onDone) imp.onDone();
   });
   if (existing) $('#rDel').addEventListener('click', () => deleteDaily('recoveryDays', existing, 'recovery entry'));
 }
