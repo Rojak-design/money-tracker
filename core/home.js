@@ -54,7 +54,10 @@ function renderMoney(s) {
   }
   const cur = (s.settings && s.settings.currency) || 'S$';
   const t = today();
-  const total = s.accounts.reduce((sum, a) => sum + accountBalance(s, a, t), 0);
+  // Cards count as the bills due this month / pay cycle, as worked out by the money tracker (kept until that
+  // period ends); if it's out of date, a card counts as everything owed on it.
+  const due = s.cardsDue && t <= s.cardsDue.until ? s.cardsDue.byCard || {} : {};
+  const total = s.accounts.reduce((sum, a) => sum + (a.type === 'credit' && due[a.id] != null ? -due[a.id] : accountBalance(s, a, t)), 0);
   const hasCards = s.accounts.some((a) => a.type === 'credit');
   const spent = spentOn(s, t);
   const count = (s.transactions || []).filter((x) => x.date === t && x.type === 'expense' && !x.transferId && x.category !== 'Transfer').length;
@@ -62,7 +65,7 @@ function renderMoney(s) {
     <div class="stat"><div class="label">Spent today</div><div class="value">${esc(moneyFormat(spent, cur))}</div>
       <div class="sub">${count ? `${count} expense${count > 1 ? 's' : ''}` : 'Nothing yet'}</div></div>
     <div class="stat"><div class="label">${hasCards ? 'Net total' : 'Total balance'}</div><div class="value ${total < 0 ? 'neg' : ''}">${esc(moneyFormat(total, cur))}</div>
-      <div class="sub">${hasCards ? 'bank accounts − card bills' : `${s.accounts.length} account${s.accounts.length > 1 ? 's' : ''}`}</div></div>`;
+      <div class="sub">${hasCards ? (s.cardsDue && t <= s.cardsDue.until ? 'bank accounts − card bills due now' : 'bank accounts − card bills') : `${s.accounts.length} account${s.accounts.length > 1 ? 's' : ''}`}</div></div>`;
 }
 
 async function renderBackupInfo() {

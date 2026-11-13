@@ -177,6 +177,7 @@ function render() {
 function renderAccounts() {
   const list = $('#accountList');
   let total = 0;
+  const dueNow = {}; // card id -> bills due this month / pay cycle
   if (!state.accounts.length) {
     list.innerHTML = `<div class="empty">No accounts yet.<br>Tap “New account” to add a bank account (e.g. Savings) or a credit card.</div>`;
   } else {
@@ -186,11 +187,16 @@ function renderAccounts() {
       const last = state.reconciliations.filter((r) => r.accountId === a.id).sort((x, y) => (y.date + y.id).localeCompare(x.date + x.id))[0];
       const checked = last ? `Checked ${niceDate(last.date)}` : 'Not reconciled yet';
       if (a.type === 'credit') {
-        const due = nextDueDate(a);
-        const sub = [due ? `Due ${niceDate(due)}` : '', a.payFromId ? `paid from ${esc(accountName(a.payFromId))}` : '', checked].filter(Boolean).join(' · ');
+        // A card shows the bills due in this month / pay cycle (what leaves the bank for it now), not all it owes.
+        const d = cardDueIn(a);
+        total += -b - d.amount; // undo the full balance added above; count only what's due now
+        dueNow[a.id] = d.amount;
+        const due = d.bills.length ? d.bills.map((x) => x.due).filter((x) => x >= today())[0] || d.bills[d.bills.length - 1].due : nextDueDate(a);
+        const sub = [due ? `${d.bills.length && d.amount ? 'Due' : 'Next bill'} ${niceDate(due)}` : '', -b > 0 ? `${money(-b)} owed in total` : '',
+          checked].filter(Boolean).join(' · ');
         return `<button class="item" data-acc="${a.id}">
           <div class="left"><div class="title">💳 ${esc(a.name)}</div><div class="sub">${sub}</div></div>
-          <div class="amt-col"><div class="amt ${-b > 0 ? 'neg' : ''}">${money(Math.max(0, -b))}</div><div class="sub">${b > 0 ? 'in credit' : 'owed'}</div></div></button>`;
+          <div class="amt-col"><div class="amt ${d.amount > 0 ? 'neg' : ''}">${money(d.amount)}</div><div class="sub">due this ${periodWord()}</div></div></button>`;
       }
       return `<button class="item" data-acc="${a.id}">
         <div class="left"><div class="title">${esc(a.name)}</div><div class="sub">${checked}</div></div>
@@ -212,11 +218,17 @@ function renderAccounts() {
     }).join('') + `</div><p class="muted small" style="margin-top:-6px">Loans aren't included in the total at the top. Tap one to update it.</p>` : '';
   $('#loanList').querySelectorAll('[data-loan]').forEach((el) => el.addEventListener('click', () => recurringSheet(el.dataset.loan)));
   const cardOwed = cardAccounts().reduce((s, a) => s + Math.max(0, owed(a.id)), 0);
+  const cardDue = Object.values(dueNow).reduce((s, v) => s + v, 0);
   const bankTotal = bankAccounts().reduce((s, a) => s + balance(a.id), 0);
-  $('#totalLabel').textContent = cardAccounts().length ? 'Net total (bank accounts − card bills)' : 'Total of all accounts';
+  $('#totalLabel').textContent = cardAccounts().length ? `Net total (bank accounts − card bills due this ${periodWord()})` : 'Total of all accounts';
   $('#totalBalance').textContent = money(total);
   $('#totalSplit').innerHTML = cardAccounts().length
-    ? `In the bank ${money(bankTotal)} · Owed on cards ${money(cardOwed)}` : '';
+    ? `In the bank ${money(bankTotal)} · Card bills due this ${periodWord()} ${money(cardDue)}<br>Owed on cards in total ${money(cardOwed)}` : '';
+  // The home screen shows the same net total; it can't work out statements itself, so keep it the card
+  // amounts due until the end of this month / pay cycle (after that it falls back to the full amount owed).
+  const p = periodContaining(today());
+  const summary = { until: p.end, byCard: dueNow };
+  if (cardAccounts().length && JSON.stringify(state.cardsDue) !== JSON.stringify(summary)) { state.cardsDue = summary; save(); }
   list.querySelectorAll('[data-acc]').forEach((el) => el.addEventListener('click', () => accountSheet(el.dataset.acc)));
 }
 
@@ -415,6 +427,7 @@ function accountSheet(id) {
   let type = a ? a.type || 'bank' : 'bank';
   const others = bankAccounts().filter((x) => !a || x.id !== a.id);
   const curWin = a && type === 'credit' ? cardStatementWindow(a, today()) : null;
+  const dueNow = curWin ? cardDueIn(a) : null;
   const curSt = curWin ? cardStatement(a, curWin) : null;
   const lastSt = curWin ? cardStatement(a, cardStatementWindow(a, addDaysISO(curWin.from, -1))) : null;
   // A statement's total, with what it's made of underneath (only the parts that apply).
@@ -438,7 +451,12 @@ function accountSheet(id) {
         <button type="button" data-t="bank">Bank account</button>
         <button type="button" data-t="credit">💳 Credit card</button></div>`}
       ${a && type === 'credit' ? `<div class="card-inset">
-        <div class="kv total"><span class="k">Owed now</span><span class="v">${money(Math.max(0, owed(a.id)))}</span></div>
+        <div class="kv total"><span class="k">Due this ${periodWord()} (${shortDate(dueNow.period.start)} – ${shortDate(dueNow.period.end)})</span><span class="v">${money(dueNow.amount)}</span></div>
+        ${dueNow.bills.map((x) => `<div class="kv sub"><span class="k">Bill due ${shortDate(x.due)}${x.paid ? `, ${money(x.paid)} paid` : ''}</span><span class="v">${money(x.left)}</span></div>`).join('')}
+        ${dueNow.bills.length ? '' : `<div class="kv sub"><span class="k">${lastSt.left && lastSt.due > dueNow.period.end
+          ? `The bill due ${shortDate(lastSt.due)} (${money(lastSt.left)}) counts from ${shortDate(addDaysISO(dueNow.period.end, 1))}, when the next ${periodWord()} starts.`
+          : `No bill due in this ${periodWord()}.`}</span></div>`}
+        <div class="kv"><span class="k">Owed now (everything on the card)</span><span class="v">${money(Math.max(0, owed(a.id)))}</span></div>
         ${stmtRows(lastSt, `Last statement (${shortDate(lastSt.from)} – ${shortDate(lastSt.to)}), due ${a.dueDay ? shortDate(lastSt.due) : '—'}`, true)}
         ${stmtRows(curSt, `This statement (${shortDate(curSt.from)} – ${shortDate(curSt.to)})`, false)}
         ${nextDueDate(a) ? `<div class="kv"><span class="k">Next bill due</span><span class="v">${niceDate(nextDueDate(a))}</span></div>` : ''}

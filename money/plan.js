@@ -541,6 +541,19 @@ function cardStatement(a, w) {
   return res;
 }
 
+// Card bills due in a period (default: the current month / pay cycle), less what's been paid towards them.
+// This is what the card costs you this month / pay cycle; bills due in the next one show up when it starts.
+function cardDueIn(a, p = periodContaining(today())) {
+  const bills = [];
+  let w = cardStatementWindow(a, addDaysISO(p.start, -62));
+  for (let guard = 0; guard < 6 && w.due <= p.end; guard++, w = cardStatementWindow(a, addDaysISO(w.to, 1))) {
+    if (w.due < p.start) continue;
+    const st = cardStatement(a, w);
+    if (st.total) bills.push(st);
+  }
+  return { period: p, bills, amount: bills.reduce((s, b) => s + b.left, 0) };
+}
+
 /* ---------- Forecast ---------- */
 // Day-to-day (non-recurring) history: everything except transfers and transactions linked to a recurring payment.
 const isDayToDay = (t) => !t.recurringId && !t.transferId && t.category !== 'Transfer' && !t.tripId && !t.projectId;
