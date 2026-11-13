@@ -433,40 +433,52 @@ function dayContext(iso) {
     r && r.sleepHours != null ? `Sleep ${fmtSleep(r.sleepHours)}` : ''].filter(Boolean).join(' · ');
 }
 
-// A small line chart of one measure over time: [{ date, v, label }] (oldest first). `invert` puts lower values at the
-// top (faster times). Tap a point to see it.
-function lineChart(points, opts = {}) {
-  if (points.length < 2) return '';
-  const W = 340, H = 150, L = 46, R = 12, T = 12, B = 24;
-  const t = points.map((p) => dayDate(p.date).getTime());
-  const t0 = Math.min(...t), t1 = Math.max(...t);
-  let lo = Math.min(...points.map((p) => p.v)), hi = Math.max(...points.map((p) => p.v));
-  const padV = (hi - lo) * 0.12 || Math.abs(hi) * 0.05 || 1;
+// A small line chart over time. `series`: [{ name, cls, points: [{ date, v, label }] (oldest first) }], all on one
+// scale (e.g. kg). `invert` puts lower values at the top (faster times). With two lines there's a legend and each line
+// is named at its end; tap a point to see it.
+function lineChart(series, opts = {}) {
+  series = series.filter((x) => x.points.length);
+  const all = series.flatMap((x) => x.points);
+  if (all.length < 2) return '';
+  const W = 340, H = 170, L = 46, R = series.length > 1 ? 54 : 12, T = 12, B = 24;
+  const tm = (p) => dayDate(p.date).getTime();
+  const t0 = Math.min(...all.map(tm)), t1 = Math.max(...all.map(tm));
+  let lo = Math.min(...all.map((p) => p.v)), hi = Math.max(...all.map((p) => p.v));
+  const padV = (hi - lo) * 0.08 || Math.abs(hi) * 0.05 || 1;
   lo -= padV; hi += padV;
-  const x = (i) => (t1 === t0 ? (L + W - R) / 2 : L + ((t[i] - t0) / (t1 - t0)) * (W - L - R));
+  const x = (p) => (t1 === t0 ? (L + W - R) / 2 : L + ((tm(p) - t0) / (t1 - t0)) * (W - L - R));
   const y = (v) => (opts.invert ? T + ((v - lo) / (hi - lo)) * (H - T - B) : H - B - ((v - lo) / (hi - lo)) * (H - T - B));
   const ticks = [lo + padV, (lo + hi) / 2, hi - padV];
   // "1 Sep" within one year; "Sep 2025" across years.
-  const oneYear = points[0].date.slice(0, 4) === points[points.length - 1].date.slice(0, 4);
+  const first = all.reduce((p, q) => (tm(q) < tm(p) ? q : p)), last = all.reduce((p, q) => (tm(q) > tm(p) ? q : p));
+  const oneYear = first.date.slice(0, 4) === last.date.slice(0, 4);
   const short = (iso) => dayDate(iso).toLocaleDateString(undefined, oneYear ? { day: 'numeric', month: 'short' } : { month: 'short', year: 'numeric' });
-  const path = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
+  const f = opts.fmt || ((v) => fmt(v, 0));
+  const lines = series.map((sr) => {
+    const path = sr.points.map((p, i) => `${i ? 'L' : 'M'}${x(p).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
+    const end = sr.points[sr.points.length - 1];
+    return `<g class="${sr.cls || 's1'}"><path d="${path}" class="line"/>
+      ${sr.points.map((p) => `<circle cx="${x(p).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="4.5" class="dot"/>`).join('')}
+      ${series.length > 1 ? `<text x="${(x(end) + 8).toFixed(1)}" y="${(y(end.v) + 4).toFixed(1)}" class="end">${esc(sr.short || sr.name)}</text>` : ''}</g>`;
+  }).join('');
+  const hits = series.flatMap((sr) => sr.points.map((p) => `<circle cx="${x(p).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="13" class="hit" data-pt="${esc(p.label)}"><title>${esc(p.label)}</title></circle>`)).join('');
   return `<figure class="chart">
+    ${series.length > 1 ? `<div class="legend">${series.map((sr) => `<span class="key ${sr.cls}"><i></i>${esc(sr.name)}</span>`).join('')}</div>` : ''}
     <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.title || '')}">
-      ${ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="grid"/><text x="${L - 6}" y="${(y(v) + 4).toFixed(1)}" class="tick" text-anchor="end">${esc(opts.fmt ? opts.fmt(v) : fmt(v, 0))}</text>`).join('')}
-      <text x="${L}" y="${H - 6}" class="tick">${esc(short(points[0].date))}</text>
-      <text x="${W - R}" y="${H - 6}" class="tick" text-anchor="end">${esc(short(points[points.length - 1].date))}</text>
-      <path d="${path}" class="line"/>
-      ${points.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="4.5" class="dot"/>`).join('')}
-      ${points.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="14" class="hit" data-pt="${esc(p.label)}"><title>${esc(p.label)}</title></circle>`).join('')}
+      ${ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="grid"/><text x="${L - 6}" y="${(y(v) + 4).toFixed(1)}" class="tick" text-anchor="end">${esc(f(v))}</text>`).join('')}
+      <text x="${L}" y="${H - 6}" class="tick">${esc(short(first.date))}</text>
+      <text x="${W - R}" y="${H - 6}" class="tick" text-anchor="end">${esc(short(last.date))}</text>
+      ${lines}${hits}
     </svg>
-    <figcaption class="readout muted small">${esc(points[points.length - 1].label)}</figcaption></figure>`;
+    <figcaption class="readout muted small">${esc(series[0].points[series[0].points.length - 1].label)}</figcaption></figure>`;
 }
 document.addEventListener('click', (e) => {
   const pt = e.target.closest('[data-pt]');
   if (!pt) return;
   const fig = pt.closest('figure');
   $('.readout', fig).textContent = pt.dataset.pt;
-  $$('.dot', fig).forEach((d, i) => d.classList.toggle('on', $$('.hit', fig)[i] === pt));
+  const i = $$('.hit', fig).indexOf(pt);
+  $$('.dot', fig).forEach((d, j) => d.classList.toggle('on', j === i));
 });
 
 function renderRecords() {
@@ -509,13 +521,16 @@ function liftSheet(name) {
   for (const l of list) { const v = e1rm(l.weightKg, l.reps); if (!days[l.date] || v > days[l.date].v) days[l.date] = { v, l }; }
   const pts = Object.keys(days).sort().map((d) => ({ date: d, v: round(days[d].v, 1), label: `${niceDate(d)}: est. 1RM ${fmtKg(round(days[d].v, 1))} (${fmtKg(days[d].l.weightKg)} × ${days[d].l.reps})` }));
   const from = pts.length ? pts[0].date : null, to = pts.length ? pts[pts.length - 1].date : null;
-  const bw = from ? state.bodyMeasurements.filter((m) => m.weightKg != null && m.date >= from && m.date <= to).sort((a, c) => a.date.localeCompare(c.date))
-    .map((m) => ({ date: m.date, v: m.weightKg, label: `${niceDate(m.date)}: ${fmt(m.weightKg, 1)} kg` })) : [];
+  // Body weight over the same dates (and the last one before, so the line starts with the lifts).
+  const before = from ? weightOn(from) : null;
+  const bw = from ? state.bodyMeasurements.filter((m) => m.weightKg != null && ((m.date >= from && m.date <= to) || m === before)).sort((a, c) => a.date.localeCompare(c.date))
+    .map((m) => ({ date: m.date < from ? from : m.date, v: m.weightKg, label: `${niceDate(m.date)}: body weight ${fmt(m.weightKg, 1)} kg` })) : [];
   openSheet(name, `<div class="form">
     <div class="tiles"><div class="tile"><div class="label">Est. 1RM</div><div class="value">${fmt(round(e1rm(b.weightKg, b.reps), 1), 1)}<small>kg</small></div><div class="label">${esc(fmtKg(b.weightKg))} × ${b.reps} · ${esc(niceDate(b.date))}</div></div>
       <div class="tile"><div class="label">Best by reps</div><div class="rep-maxes">${Object.keys(byReps).sort((p, q) => p - q).map((r) => `<div><strong>${r}RM</strong> ${esc(fmtKg(byReps[r].weightKg))}</div>`).join('')}</div></div></div>
-    ${pts.length > 1 ? `<div><div class="label-t">Est. 1RM (kg)</div>${lineChart(pts, { title: `${name} estimated 1-rep max over time`, fmt: (v) => fmt(v, 0) })}</div>` : ''}
-    ${bw.length > 1 ? `<div><div class="label-t">Body weight (kg), same dates</div>${lineChart(bw, { title: 'Body weight over the same dates', fmt: (v) => fmt(v, 1) })}</div>` : ''}
+    ${pts.length > 1 ? `<div><div class="label-t">${bw.length ? 'Est. 1RM and body weight (kg)' : 'Est. 1RM (kg)'}</div>${lineChart([
+      { name: `${name} est. 1RM`, short: 'Lift', cls: 's1', points: pts },
+      { name: 'Body weight', short: 'Body', cls: 's2', points: bw }], { title: `${name} estimated 1-rep max and body weight over time`, fmt: (v) => fmt(v, 0) })}</div>` : ''}
     <div class="list">${list.map((l) => { const ctx = dayContext(l.date); return `<button type="button" class="item" data-l="${l.id}">
       <div class="left"><div class="title">${esc(fmtKg(l.weightKg))} × ${l.reps}${l === b ? ' 🏆' : ''}</div><div class="sub">${esc(niceDate(l.date))}${ctx ? ' · ' + esc(ctx) : ''}</div></div>
       <div class="amt">${esc(fmt(round(e1rm(l.weightKg, l.reps), 1), 1))}<div class="sub">est. 1RM</div></div></button>`; }).join('')}</div>
@@ -573,7 +588,7 @@ function runSheet(id) {
   const pts = [...list].reverse().map((r) => ({ date: r.date, v: r.timeSec, label: `${niceDate(r.date)}: ${fmtTime(r.timeSec)} (${paceOf(r)})` }));
   openSheet(d.name, `<div class="form">
     ${b ? `<div class="tiles"><div class="tile"><div class="label">Fastest</div><div class="value">${esc(fmtTime(b.timeSec))}</div><div class="label">${esc(paceOf(b))} · ${esc(niceDate(b.date))}</div></div></div>` : '<div class="empty">No times yet.</div>'}
-    ${pts.length > 1 ? `<div><div class="label-t">Time (faster at the top)</div>${lineChart(pts, { title: `${d.name} times over time`, invert: true, fmt: (v) => fmtTime(v) })}</div>` : ''}
+    ${pts.length > 1 ? `<div><div class="label-t">Time (faster at the top)</div>${lineChart([{ name: d.name, cls: 's1', points: pts }], { title: `${d.name} times over time`, invert: true, fmt: (v) => fmtTime(v) })}</div>` : ''}
     <div class="list">${list.map((r) => { const ctx = dayContext(r.date); return `<button type="button" class="item" data-rr="${r.id}">
       <div class="left"><div class="title">${esc(fmtTime(r.timeSec))}${r === b ? ' 🏆' : ''}</div><div class="sub">${esc(niceDate(r.date))} · ${esc(paceOf(r))}${ctx ? ' · ' + esc(ctx) : ''}</div></div></button>`; }).join('')}</div>
     <button type="button" class="btn" id="runAdd">+ Add a ${esc(d.name)} time</button>
