@@ -346,3 +346,6 @@ label.check input { width: 22px; height: 22px; flex: none; }
 .cost-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px; }
 .mini-btn { border: 1px solid var(--line); background: var(--card); color: var(--primary); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 a.btn { text-decoration: none; box-sizing: border-box; }
+
+/* Link back to the Rojak home screen */
+.back-home { display: inline-block; color: var(--primary); font-weight: 600; text-decoration: none; font-size: 15px; margin-bottom: 2px; }

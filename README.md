@@ -1,9 +1,22 @@
-# Money Tracker
+# Rojak
 
-A simple money tracker that runs in your phone's browser and can be installed on your home screen.
-Plain HTML, CSS and JavaScript — no build step. **All data stays on your phone.**
+Rojak is a home screen that links to separate mini apps (modules). It runs in your phone's browser and can be
+installed on your home screen. Plain HTML, CSS and JavaScript — no build step. **All data stays on your phone.**
 
-## Features
+## Home screen
+- **Money** card: what you spent today and your total balance (the same total as on the Accounts screen). Tap it to open the money tracker.
+- **Habits, Fitness, Books / Music, Scheduler**: placeholders for modules to be built later.
+- **Export backup**: one file with everything in Rojak (restore it with Money → Backup → Import backup).
+- The avatar's hair colour changes every month (on the home screen and in the browser tab). The icon on your phone's home screen stays teal: phones don't let a web app change that after it's installed.
+
+## Shared data store
+The home screen and every module save through one store (`core/store.js`). Every entry (account, transaction,
+reconciliation, recurring payment, project, trip…) is saved with `savedAt` (when it was first saved) and
+`updatedAt` (when it last changed), so modules can be compared later. Entries saved before Rojak were given
+their best-guess date the first time the money tracker opened (when the account was created, or the entry's
+own date). The money tracker's data stays where it always was, so earlier data and backups still load.
+
+## Money module (money tracker)
 - Multiple accounts (e.g. Savings, Spending) with a starting balance **as of a date**; entries dated before it (e.g. past trips added later) are kept for history and charts but don't change the balance
 - **Transfers** between your own accounts (e.g. salary to a savings account): **⇄ Transfer** on the Accounts screen. A transfer is two linked entries (out of one account, into the other), never counted as spending or income; tap either one in History to edit or delete it. Paying a card bill is a transfer to the card. Regular transfers (e.g. part of your salary into savings every payday) can be set up under Plan → Recurring → **Transfer**; they're listed with what's due and can be logged in one tap.
 - Credit cards: log purchases on a card, see what you owe, what you spent this month and last, the next due date and available credit. **Pay card bill** moves money from a bank account to the card (not counted as spending). Reconcile a card by typing the amount owed shown by your bank. Set the card's statement closing day and due day so bills are worked out per statement cycle.
@@ -19,14 +32,14 @@ Plain HTML, CSS and JavaScript — no build step. **All data stays on your phone
   - **Forecast** – the next 12 months of spending: recurring payments plus day-to-day spending (food, transport…) projected from your history, using the trend or the average of the last 3, 6 or 12 months. Tap a month for the breakdown. Switch to **Savings** to see how much you can save each month or pay cycle (expected income − spending), the total over 12 months, how that fits your savings projects, and where your bank balance is heading. If you use credit cards, each month or pay cycle also shows the card bills due in it (worked out from each card's statement cycle) and the cash leaving your bank accounts.
   - **Projects** – save for a house, wedding, etc.: list the expected costs, what's saved (typed in or an account's balance) and how much you save each month, and see how many months it will take and whether you'll make a target date. Each cost can have the month it's needed and be paid in monthly instalments (e.g. a sofa in 12 payments from July); the app then works out how much to save each month — either as payments come due (e.g. S$5,500 in Jan, then S$500 a month for instalments) or spread out ahead of big payments (e.g. S$1,833.34 a month until Jan, then S$500) — and updates it when costs or savings change. You can still choose a fixed amount instead. When you buy something, link the expense to the project's cost (or tap **Log a payment** on it): the project shows what was paid against the plan, counts instalments paid, and works out what's left. Each cost can list options — vendor / brand, a link to the product (tap **Open ↗**), price and note — and you can use an option's price as the plan.
 - Pay cycles: set your payday under **Backup → Settings** (optionally moved to the Friday before when it falls on a weekend). The forecast, its chart and the category totals in History then use pay cycles (payday to the day before the next payday) instead of calendar months. If your payday changes (e.g. a new job), use **Payday changing?** and enter the first payday on the new schedule: earlier cycles keep the old payday.
-- Export / Import a backup file (includes screenshots)
+- Export / Import a backup file (includes screenshots). Rojak backups from the home screen import here too.
 - Works offline, has light and dark mode
 
 ## Publish with GitHub Pages
 1. On GitHub, open this repository → **Settings** → **Pages**.
 2. Under **Build and deployment**, set Source to **Deploy from a branch**.
 3. Choose the branch (e.g. `main`) and folder **/ (root)**, then tap **Save**.
-4. Wait 1–2 minutes and refresh. Your link appears at the top: `https://<your-username>.github.io/money-tracker/`
+4. Wait 1–2 minutes and refresh. Your link appears at the top: `https://<your-username>.github.io/<repository-name>/`
 
 ## Install on your phone
 - **iPhone (Safari):** open the link → Share button → **Add to Home Screen**.
@@ -38,11 +51,12 @@ or lose your phone, the data is gone. Use **Backup → Export backup** and save 
 On iPhone, the home-screen app and Safari keep separate data — use the home-screen app consistently.
 
 ## Files
-- `index.html` – the page
-- `style.css` – the look
-- `app.js` – accounts, transactions, categories, reconciliation, backup
-- `plan.js` – recurring payments, savings projects and the forecast
-- `ocr/` – Tesseract.js (Apache 2.0, licences included) for reading balances from screenshots; loaded only when you pick a screenshot
-- `manifest.json`, `sw.js`, `icon-v2*.png`, `icon-v2.svg`, `apple-touch-icon-v2.png` – make it installable and work offline
+- `index.html` – the Rojak home screen
+- `core/home.js`, `core/home.css` – home screen
+- `core/store.js` – the shared data store (IndexedDB), entry dates, backup export
+- `core/avatar.js` – the avatar icon and its monthly hair colours
+- `money/` – the money tracker: `index.html`, `style.css`, `app.js` (accounts, transactions, categories, reconciliation, backup), `plan.js` (recurring payments, savings projects, trips and the forecast)
+- `money/ocr/` – Tesseract.js (Apache 2.0, licences included) for reading balances from screenshots; loaded only when you pick a screenshot
+- `manifest.json`, `sw.js`, `rojak-icon*`, `rojak-apple-touch-icon.png` – make it installable and work offline (`icon-v2.svg`, `apple-touch-icon-v2.png` are the money tracker's own tab icon)
 
-When you change any file, bump `VERSION` in `sw.js` and the matching `?v=` numbers in `index.html` (keep them all the same) so phones pick up the update with all files matching.
+When you change any file, bump `VERSION` in `sw.js` and the matching `?v=` numbers in `index.html` and `money/index.html` (keep them all the same) so phones pick up the update with all files matching.

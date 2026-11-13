@@ -1,38 +1,9 @@
 /* Money Tracker — all data is stored on this device (IndexedDB). */
 'use strict';
 
-/* ---------- Storage (IndexedDB) ---------- */
-const DB_NAME = 'money-tracker';
-const STORE = 'kv';
-let dbPromise;
-
-function openDB() {
-  if (!dbPromise) {
-    dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, 1);
-      req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-  }
-  return dbPromise;
-}
-async function dbDo(mode, fn) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, mode);
-    const store = tx.objectStore(STORE);
-    const req = fn(store);
-    tx.oncomplete = () => resolve(req && req.result);
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
-  });
-}
-const dbGet = (key) => dbDo('readonly', (s) => s.get(key));
-const dbSet = (key, val) => dbDo('readwrite', (s) => s.put(val, key));
-const dbDel = (key) => dbDo('readwrite', (s) => s.delete(key));
-const dbClear = () => dbDo('readwrite', (s) => s.clear());
-const dbKeys = () => dbDo('readonly', (s) => s.getAllKeys());
+/* ---------- Storage ----------
+   Saving and loading go through the shared Rojak store (../core/store.js), which provides dbGet, dbSet, dbDel,
+   dbClear and dbKeys. The data stays in the same place as before, so everything saved earlier still loads. */
 
 /* ---------- State ---------- */
 // Amounts are stored as whole cents (integers) to avoid rounding errors.
@@ -83,12 +54,14 @@ function migrate() {
 }
 
 async function load() {
-  const saved = await dbGet('state');
+  const saved = await Rojak.load('money');
   if (saved) state = Object.assign(emptyState(), saved);
   migrate();
+  if (saved) await save(); // gives entries saved earlier their dates (savedAt / updatedAt); nothing else changes
 }
+// The shared store also dates every entry: savedAt (first saved) and updatedAt (last changed).
 function save() {
-  return dbSet('state', state).catch((err) => {
+  return Rojak.save('money', state).catch((err) => {
     console.error(err);
     toast('Could not save! Storage may be full.');
   });
@@ -1467,7 +1440,7 @@ async function init() {
   showStorageInfo();
   // Ask the browser not to auto-delete our data.
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('../sw.js').catch(() => {});
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
 else init();
