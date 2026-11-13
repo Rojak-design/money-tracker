@@ -5,8 +5,8 @@
      workoutTypes:      { id, name, icon, kind, pace, movements: [names], hidden }  your workout types, in the
                           order shown; kind is what's logged: 'cardio' (distance & pace), 'strength' (movements &
                           sets) or 'other' (time & notes)
-     workouts:          { id, date, typeId, type (the type's name), kind, durationMin, notes, source,
-                          cardio?:    { distanceKm, timeSec, paceSecPerKm, avgHr,
+     workouts:          { id, date, typeId, type (the type's name), kind, durationMin, avgHr, calories, notes, source,
+                          cardio?:    { distanceKm, timeSec, paceSecPerKm,
                                         intervals?: [ { distanceKm, timeSec, paceSecPerKm, restSec } ] (one per rep) },
                           movements?: [ { name, restSec, sets: [ { reps, weightKg } ] } ] }
                           restSec: rest between sets of that movement, in seconds (null if not given)
@@ -67,6 +67,10 @@ function migrate() {
     changed = true;
   }
   if ('movementNames' in state) { delete state.movementNames; changed = true; }
+  // Average heart rate is now kept for every workout (it was only on distance workouts).
+  for (const w of state.workouts) {
+    if (w.cardio && 'avgHr' in w.cardio) { if (w.avgHr == null) w.avgHr = w.cardio.avgHr; delete w.cardio.avgHr; changed = true; }
+  }
   // Workouts saved before types had ids get their type's id (HIIT is now Functional).
   for (const w of state.workouts) {
     if (w.typeId && state.workoutTypes.some((t) => t.id === w.typeId)) continue;
@@ -240,13 +244,14 @@ function workoutSummary(w) {
     if (c.distanceKm != null) parts.push(fmtDist(c.distanceKm, typeOfW(w)));
     if (c.paceSecPerKm) parts.push(fmtPace(c.paceSecPerKm, how, true));
     if (c.intervals && c.intervals.length) parts.push(intervalSummary(c.intervals, typeOfW(w)));
-    if (c.avgHr) parts.push(`${c.avgHr} bpm`);
   }
   if (w.movements && w.movements.length) {
     parts.push(w.movements.map((m) => m.name).join(', '));
     parts.push(`${setCount(w)} set${setCount(w) === 1 ? '' : 's'}`);
     if (topWeight(w)) parts.push(`top ${fmt(topWeight(w), 1)} kg`);
   }
+  if (w.avgHr) parts.push(`${w.avgHr} bpm`);
+  if (w.calories) parts.push(`${fmt(w.calories, 0)} kcal`);
   if (!parts.length && w.notes) parts.push(w.notes);
   return parts.join(' · ');
 }
@@ -310,7 +315,6 @@ function workoutSheet(id, copyFrom, imp) {
           <label><span id="wDistLabel">Distance (km)</span><input id="wDist" inputmode="decimal" autocomplete="off"></label>
           <label>Time <input id="wTime" inputmode="decimal" data-fmt="time" placeholder="e.g. 28:36" autocomplete="off"></label>
           <label><span id="wPaceLabel">Pace (min:sec /km)</span><input id="wPace" inputmode="decimal" data-fmt="pace" autocomplete="off"></label>
-          <label>Avg heart rate <input id="wHr" inputmode="numeric" placeholder="bpm" autocomplete="off"></label>
         </div>
         <div class="hint">Fill in any two of distance, time and pace — the third is worked out. Times can be typed with a dot instead of ":" (28.36 = 28:36).</div>
         <div id="wIntWrap" class="form" style="gap:8px">
@@ -329,6 +333,13 @@ function workoutSheet(id, copyFrom, imp) {
         <datalist id="moveNames"></datalist>
       </div>
 
+      <div class="grid2">
+        <label>Avg heart rate <input id="wHr" inputmode="numeric" placeholder="bpm" autocomplete="off"></label>
+        <label>Calories <input id="wCal" inputmode="numeric" placeholder="kcal" autocomplete="off"></label>
+      </div>
+      <div class="from-shots"><button type="button" class="mini-btn" id="wFromShots">📷 Add numbers from screenshots</button>
+        <div class="hint">e.g. average heart rate and calories from Garmin or Whoop for a WodUp workout. Only fills what's empty.</div>
+        <div id="wFromShotsInfo" class="hint"></div></div>
       <label id="wDurWrap">Duration (minutes) <input id="wDur" inputmode="numeric" autocomplete="off" placeholder="e.g. 45"></label>
       <label>Notes <textarea id="wNotes" placeholder="How did it feel? Where?">${esc(src ? src.notes : '')}</textarea></label>
       <button class="btn" type="submit">${existing ? 'Save changes' : 'Save workout'}</button>
@@ -366,7 +377,10 @@ function workoutSheet(id, copyFrom, imp) {
   if (c.distanceKm != null) fields.dist.value = showDistFor(c.distanceKm, typeOf(type));
   if (c.timeSec) fields.time.value = fmtTime(c.timeSec);
   if (c.paceSecPerKm) fields.pace.value = fmtPace(c.paceSecPerKm, typeOf(type).pace);
-  if (c.avgHr) $('#wHr').value = c.avgHr;
+  // Heart rate and calories belong to one session: kept when editing or importing, not when logging again.
+  const own = existing || (imp ? src : null);
+  if (own && (own.avgHr || c.avgHr)) $('#wHr').value = own.avgHr || c.avgHr;
+  if (own && own.calories) $('#wCal').value = own.calories;
   // A duration worked out from the cardio time isn't shown, so it follows the time if that changes.
   if (src && src.durationMin && !(c.timeSec && src.durationMin === Math.round(c.timeSec / 60))) $('#wDur').value = src.durationMin;
   // Editing a saved workout: changing the distance or time updates the pace.
@@ -515,16 +529,19 @@ function workoutSheet(id, copyFrom, imp) {
     const t = typeOf(type), kind = t.kind;
     let durationMin = kind === 'cardio' ? null : num($('#wDur').value);
     if (isNaN(durationMin) || durationMin < 0 || durationMin > 1440) return toast('Check the duration (minutes)');
+    const hr = num($('#wHr').value), cal = num($('#wCal').value);
+    if (Number.isNaN(hr) || (hr != null && (hr < 30 || hr > 230))) return toast('Check the heart rate (bpm)');
+    if (Number.isNaN(cal) || (cal != null && (cal < 0 || cal > 10000))) return toast('Check the calories (kcal)');
     const w = { id: existing ? existing.id : uid(), date, typeId: t.id, type: t.name, kind, durationMin: durationMin == null ? null : round(durationMin, 0),
+      avgHr: hr == null ? null : Math.round(hr), calories: cal == null ? null : Math.round(cal),
       notes: $('#wNotes').value.trim(), source: existing ? existing.source || 'manual' : 'manual' };
 
     if (kind === 'cardio') {
-      const d = readDist(), t = parseTime(fields.time.value), p = parsePace(fields.pace.value, how()), hr = num($('#wHr').value);
+      const d = readDist(), t = parseTime(fields.time.value), p = parsePace(fields.pace.value, how());
       if (Number.isNaN(d) || (d != null && (d <= 0 || d > 1000))) return toast('Check the distance');
       if (Number.isNaN(t) || (t != null && t <= 0)) return toast('Type the time as mm:ss or h:mm:ss');
       if (Number.isNaN(p)) return toast(how() === 'speed' ? 'Check the speed' : 'Type the pace as min:sec, e.g. 5:30');
-      if (Number.isNaN(hr) || (hr != null && (hr < 30 || hr > 230))) return toast('Check the heart rate (bpm)');
-      const cardio = { distanceKm: d == null ? null : round(d, 3), timeSec: t, paceSecPerKm: p == null ? null : Math.round(p), avgHr: hr == null ? null : Math.round(hr) };
+      const cardio = { distanceKm: d == null ? null : round(d, 3), timeSec: t, paceSecPerKm: p == null ? null : Math.round(p) };
       // Intervals: skip empty rows, check the rest, and work out each rep's missing value.
       const reps = [];
       for (const [i, r] of readReps(how(), intUnit()).entries()) {
@@ -814,7 +831,7 @@ const RECOVERY_FIELDS = [
   { key: 'hrvMs', label: 'HRV', unit: 'ms', min: 1, max: 300, dp: 0, ph: 'e.g. 65' },
   { key: 'restingHr', label: 'Resting heart rate', unit: 'bpm', min: 25, max: 150, dp: 0, ph: 'e.g. 54' },
   { key: 'sleepHours', label: 'Sleep', unit: 'hours', min: 0, max: 24, dp: 2, ph: 'e.g. 7:30' },
-  { key: 'sleepScore', label: 'Sleep score', unit: '%', min: 0, max: 100, dp: 0, ph: 'e.g. 85' },
+  { key: 'sleepScore', label: 'Sleep quality', unit: '% (Whoop sleep performance, Garmin sleep score)', min: 0, max: 100, dp: 0, ph: 'e.g. 85' },
   { key: 'strain', label: 'Strain', unit: '0–21', min: 0, max: 21, dp: 1, ph: 'e.g. 12.4' },
   { key: 'bodyBattery', label: 'Body Battery', unit: '0–100 (Garmin)', min: 0, max: 100, dp: 0, ph: 'e.g. 48' }
 ];

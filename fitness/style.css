@@ -234,3 +234,5 @@ label.imported input { border-color: var(--primary); }
 .progress { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
 .progress > div { height: 100%; width: 0; background: var(--primary); border-radius: 4px; transition: width .2s; }
 .pick-list { display: flex; flex-direction: column; gap: 8px; }
+
+.from-shots { display: flex; flex-direction: column; gap: 4px; margin-top: -4px; }
