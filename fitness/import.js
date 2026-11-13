@@ -334,8 +334,13 @@ function writtenMoves(lines) {
     if (/\b(AMRAP|EMOM|E\d+MOM)\b|^\W*for time\W*$/i.test(raw0) && !/^\d+\s+\w/.test(raw0)) { if (!scheme) { circuit = true; block++; } continue; }
     // A new part ("B.", "Part 2", "Metcon") starts again with one set.
     if (/^(?:[A-Z][.,)]|part\s+\d|metcon|strength|skill|accessory)(?:\s|$)/i.test(raw0) && !/^[A-Z][.,)]\s*\d/.test(raw0)) { sets = 1; scheme = null; circuit = false; block++; heading = null; }
-    // Leave out part labels and bullets: "A1.", "B)", "1.", "-", "•".
-    const raw = raw0.replace(/^(?:[A-Z][0-9]?[.)]|\d{1,2}[.)](?!\d)|[-•*–])\s*/, '').trim();
+    // Leave out part labels and bullets: "A1.", "B)", "1.", "-", "•". Men's/women's numbers ("12/10 calories",
+    // "100/70 kg"): the second one is used, as for weights.
+    const raw = raw0.replace(/^(?:[A-Z][0-9]?[.)]|\d{1,2}[.)](?!\d)|[-•*–])\s*/, '').trim()
+      .replace(/\b\d+\s*\/\s*(\d+)(?=\s*(?:cal|cals|calories|kcal)\b)/i, '$1').replace(/\bcalories\b/i, 'cal');
+    // "SkiErg 12/10 calories", "Row 15 cal"
+    m = raw.match(/^([A-Za-z][A-Za-z' -]+?)\s+(\d{1,4})\s*(?:cal|cals|kcal)\b/i);
+    if (m && moveName(m[1])) { push({ read: `${moveName(m[1])} (cal)`, reps: +m[2], sets: scheme ? 1 : sets, scheme: Array.isArray(scheme) ? scheme : null }); continue; }
     // "21-15-9 thrusters, pull-ups" / "2-4-6-8-10-..." (a ladder: reps not known)
     m = raw.match(/^(\d+(?:\s*[-–/]\s*\d+){2,})(\s*[-–]?\s*\.\.\.)?\s*(.*)$/);
     if (m) {
@@ -392,7 +397,8 @@ function parseWod(shot, acc) {
     if (t) acc.typeId = t.id;
   }
   acc.moves.push(...writtenMoves(keep).map((mv) => Object.assign(mv, { group: mv.group ? `${mv.group}-${acc.shots}` : null })));
-  acc.notes.push(...keep.filter((x) => !WOD_SKIP.test(x)));
+  // Notes: the workout's own lines (not buttons, nor bits of the phone's screen like "Il @)").
+  acc.notes.push(...keep.filter((x) => !WOD_SKIP.test(x) && (/[A-Za-z]{3,}/.test(x) || /\d.*\d/.test(x))));
   if (/\b(AMRAP|EMOM|for time|rounds|WOD|metcon|crossfit)\b/i.test(shot.text)) acc.crossfit = true;
 }
 function wodToMovements(acc, t) {
