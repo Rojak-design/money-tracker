@@ -75,6 +75,39 @@ const niceWhen = (iso) => {
   const ago = days <= 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
   return `${ago} (${new Date(iso).toLocaleDateString()})`;
 };
+/* ----- Fitness summary ----- */
+const FITNESS_ICONS = { Run: '🏃', Cycle: '🚴', Swim: '🏊', Walk: '🚶', Hike: '🥾', Strength: '🏋️', HIIT: '🔥', Yoga: '🧘', Sport: '⚽' };
+function dayLabel(iso) {
+  const t = today(), y = new Date(); y.setDate(y.getDate() - 1);
+  if (iso === t) return 'Today';
+  if (iso === isoDay(y)) return 'Yesterday';
+  return new Date(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+}
+const newest = (list) => [...(list || [])].sort((a, b) => (b.date + (b.savedAt || '')).localeCompare(a.date + (a.savedAt || '')))[0];
+function renderFitness(f) {
+  const el = $('#fitnessSummary');
+  const w = newest(f && f.workouts);
+  const r = newest(((f && f.recoveryDays) || []).filter((x) => x.recoveryScore != null));
+  if (!w && !r) {
+    el.innerHTML = `<div class="muted small" style="grid-column:1/-1">Nothing logged yet. Tap to log a workout, your weight or recovery.</div>`;
+    return;
+  }
+  let wSub = '';
+  if (w) {
+    const c = w.cardio || {};
+    const bits = [dayLabel(w.date)];
+    if (c.distanceKm) bits.push(w.type === 'Swim' ? `${Math.round(c.distanceKm * 1000)} m` : `${+c.distanceKm.toFixed(2)} km`);
+    else if (w.movements && w.movements.length) bits.push(`${w.movements.length} movement${w.movements.length > 1 ? 's' : ''}`);
+    else if (w.durationMin) bits.push(`${w.durationMin} min`);
+    wSub = bits.join(' · ');
+  }
+  el.innerHTML = `
+    <div class="stat"><div class="label">Last workout</div><div class="value">${w ? `${FITNESS_ICONS[w.type] || '💪'} ${esc(w.type)}` : '–'}</div>
+      <div class="sub">${w ? esc(wSub) : 'None yet'}</div></div>
+    <div class="stat"><div class="label">Recovery</div><div class="value">${r ? `${Math.round(r.recoveryScore)}<small>%</small>` : '–'}</div>
+      <div class="sub">${r ? esc(dayLabel(r.date)) : 'None yet'}</div></div>`;
+}
+
 async function renderBackupInfo() {
   const last = await Rojak.lastBackupAt();
   $('#backupInfo').textContent = (last ? `Last backup ${niceWhen(last)}. ` : 'No backup made yet. ') +
@@ -101,10 +134,12 @@ async function renderBackupInfo() {
 async function refresh() {
   try {
     renderMoney(await Rojak.load('money'));
+    renderFitness(await Rojak.load('fitness'));
     await renderBackupInfo();
   } catch (err) {
     console.error(err);
     $('#moneySummary').innerHTML = `<div class="muted small">Could not open storage on this browser.</div>`;
+    $('#fitnessSummary').innerHTML = '';
   }
 }
 

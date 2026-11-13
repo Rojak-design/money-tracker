@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Rojak</title>
-  <meta name="description" content="Rojak — your everyday app: money tracker, and more to come. Data stays on your phone.">
+  <meta name="description" content="Rojak — your everyday app: money, fitness and more to come. Data stays on your phone.">
   <meta name="theme-color" content="#0f766e">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="rojak-icon.svg" type="image/svg+xml">
@@ -13,8 +13,8 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Rojak">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <!-- When app files change, bump ?v= here, in money/index.html and the version in sw.js (keep them all the same). -->
-  <link rel="stylesheet" href="core/home.css?v=30">
+  <!-- When app files change, bump ?v= here, in money/index.html, fitness/index.html and the version in sw.js (keep them all the same). -->
+  <link rel="stylesheet" href="core/home.css?v=31">
 </head>
 <body>
   <!-- She and the cat peek over the top edge of the Money card; the header's bottom is that edge. -->
@@ -36,12 +36,17 @@
       <div id="moneySummary" class="money-summary"><div class="muted small">Loading…</div></div>
     </a>
 
+    <!-- Fitness module: tap to open it -->
+    <a class="card module-card fitness" href="fitness/" id="fitnessCard">
+      <div class="module-head"><span class="module-icon">💪</span><h2>Fitness</h2><span class="open">Open ›</span></div>
+      <div id="fitnessSummary" class="money-summary"><div class="muted small">Loading…</div></div>
+    </a>
+
     <!-- Modules to be built later -->
     <div class="soon-grid">
       <div class="card soon"><span class="module-icon">🌱</span><h2>Habits</h2><div class="muted small">Coming soon</div></div>
-      <div class="card soon"><span class="module-icon">💪</span><h2>Fitness</h2><div class="muted small">Coming soon</div></div>
       <div class="card soon"><span class="module-icon">📚</span><h2>Books / Music</h2><div class="muted small">Coming soon</div></div>
-      <div class="card soon"><span class="module-icon">🗓️</span><h2>Scheduler</h2><div class="muted small">Coming soon</div></div>
+      <div class="card soon wide"><span class="module-icon">🗓️</span><h2>Scheduler</h2><div class="muted small">Coming soon</div></div>
     </div>
 
     <!-- Backup and restore for the whole app: one file with every module (screenshots are never included) -->
@@ -82,9 +87,9 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="core/store.js?v=30"></script>
-  <script src="core/avatar.js?v=30"></script>
-  <script src="core/cat.js?v=30"></script>
-  <script src="core/home.js?v=30"></script>
+  <script src="core/store.js?v=31"></script>
+  <script src="core/avatar.js?v=31"></script>
+  <script src="core/cat.js?v=31"></script>
+  <script src="core/home.js?v=31"></script>
 </body>
 </html>
