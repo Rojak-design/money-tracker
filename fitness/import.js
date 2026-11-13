@@ -6,6 +6,7 @@
 
    What is read:
      Garmin Connect  All Activities list               each activity's name, date and time → the calendar
+                     Personal Records (Running)        fastest 5K, 10K, half marathon, marathon with dates
                      At a Glance and other day pages   resting heart rate, HRV, Body Battery, sleep score
      Whoop           recovery, strain and sleep pages  recovery %, HRV, resting heart rate, sleep performance,
                                                        strain, hours of sleep */
@@ -177,10 +178,31 @@ function parseActivityList(shot) {
   return out;
 }
 
+/* ---------- Garmin Connect: Personal Records (Running) ---------- */
+// "5K" (often read as "SK") with its time, and the date on the line under it; the time is on either line.
+const PR_LABELS = [['half', /\bhalf\s*marathon\b/i], ['full', /\bmarathon\b/i], ['10k', /\b1[0O]\s*K\b/], ['5k', /\b[5S]\s*K\b/]];
+const CLOCK = /(\d{1,2}:\d{2}(?::\d{2})?)(?!.*\d:\d)/;
+function parseRecords(shot) {
+  const L = shot.lines.map((l) => l.text);
+  const out = [];
+  for (let i = 0; i < L.length; i++) {
+    const hit = PR_LABELS.find(([, re]) => re.test(L[i]));
+    if (!hit || out.some((r) => r.distance === hit[0])) continue;
+    const next = L[i + 1] || '';
+    const tm = (L[i].match(CLOCK) || next.match(CLOCK) || [])[1];
+    const date = findDate(next.replace(CLOCK, '')) || findDate(L[i].replace(CLOCK, ''));
+    const timeSec = tm ? Math.round(clockSec(tm)) : null;
+    if (!timeSec || !date) continue;
+    out.push({ distance: hit[0], timeSec, date });
+  }
+  return out;
+}
+
 /* ---------- What kind of screenshot is it? ---------- */
 function detect(shot) {
   const t = shot.text;
   if (/WH\W?OO\W?P|HEART RATE VARIABILITY|SLEEP PERFORMANCE|DAY STRAIN|^\W*STRAIN\W*$/m.test(t)) return 'whoop';
+  if (/personal\s*records/i.test(t) || /\bhalf\s*marathon\b/i.test(t)) { shot.prs = parseRecords(shot); if (shot.prs.length) return 'garminRecords'; }
   shot.acts = parseActivityList(shot);
   if (shot.acts.length) return 'garminList';
   if (/at a\s*glance|body battery|hrv status|\bresting\b|sleep score|training readiness|overnight hrv/i.test(t)) return 'garminDay';
@@ -309,7 +331,7 @@ document.body.appendChild(fileInput);
 $$('[data-import]').forEach((b) => b.addEventListener('click', () => { fileInput.value = ''; fileInput.click(); }));
 fileInput.addEventListener('change', () => { if (fileInput.files.length) importShots([...fileInput.files]); });
 
-const KIND_NAMES = { garminList: 'Garmin activities', garminDay: 'Garmin day', whoop: 'Whoop' };
+const KIND_NAMES = { garminList: 'Garmin activities', garminRecords: 'Garmin personal records', garminDay: 'Garmin day', whoop: 'Whoop' };
 
 async function importShots(files) {
   for (const u of lastUrls) URL.revokeObjectURL(u);
@@ -359,6 +381,13 @@ async function review(shots) {
     steps.push(() => activitiesSheet(rows, listShots, next));
   }
 
+  const prShots = shots.filter((s) => s.kind === 'garminRecords');
+  if (prShots.length) {
+    const prs = [];
+    for (const s of prShots) for (const r of s.prs) if (!prs.some((x) => x.distance === r.distance && x.timeSec === r.timeSec)) prs.push(r);
+    steps.push(() => recordsSheet(prs, prShots, next));
+  }
+
   if (dayShots.length) {
     const rec = { values: {}, source: {}, notes: {}, weak: {} };
     for (const s of dayShots) {
@@ -393,7 +422,7 @@ async function review(shots) {
   if (!steps.length) {
     openSheet('Nothing found', `<div class="form">
       <p style="margin:0">Nothing could be read from ${shots.length > 1 ? 'these screenshots' : 'this screenshot'}.</p>
-      <p class="muted small" style="margin:0">Screens that work: Garmin Connect <strong>All Activities</strong> (for the calendar), Garmin <strong>At a Glance</strong>, and Whoop <strong>recovery</strong>, <strong>sleep</strong> and <strong>strain</strong>.</p>
+      <p class="muted small" style="margin:0">Screens that work: Garmin Connect <strong>All Activities</strong> (for the calendar), <strong>Personal Records</strong> (running), Garmin <strong>At a Glance</strong>, and Whoop <strong>recovery</strong>, <strong>sleep</strong> and <strong>strain</strong>.</p>
       ${shots.length ? thumbs(shots) : ''}
       <button type="button" class="btn secondary" data-close>Close</button></div>`);
     return;
@@ -402,6 +431,29 @@ async function review(shots) {
   next();
 }
 const thumbs = (list) => `<div class="shots">${list.map((s, i) => `<img src="${s.url}" alt="Screenshot ${i + 1}" data-shot>`).join('')}</div><div class="shot-view"></div>`;
+
+// Fastest times read from Garmin's Personal Records, to check. Times already saved are unticked.
+function recordsSheet(prs, shots, next) {
+  prs.sort((a, b) => RUNS.findIndex((d) => d.id === a.distance) - RUNS.findIndex((d) => d.id === b.distance));
+  const dup = (r) => state.runRecords.find((x) => x.distance === r.distance && x.timeSec === r.timeSec);
+  openSheet('Check imported records', `<form class="form" id="prForm" novalidate>
+      <div class="import-banner"><div>📷 <strong>Read ${prs.length} record${prs.length > 1 ? 's' : ''}</strong>. Check the times and dates against the screenshot. Each saved time is kept, so you see your records come down over time. Nothing is saved until you tap Save.</div>
+        ${thumbs(shots)}</div>
+      ${prs.map((r, i) => { const d = dup(r); return `<label class="rec-row${d ? ' dup' : ''}"><span><strong>${esc(runOf(r.distance).name)} ${esc(fmtTime(r.timeSec))}</strong><br>
+        <span class="muted small">${esc(niceDate(r.date))} · ${esc(paceOf(r))}${d ? ' · already saved' : ''}</span></span>
+        <input type="checkbox" class="pron" data-i="${i}" ${d ? '' : 'checked'}></label>`; }).join('')}
+      <button class="btn" type="submit">Save</button></form>`);
+  $('#prForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    let n = 0;
+    for (const b of $$('.pron')) if (b.checked) { const r = prs[+b.dataset.i]; if (!dup(r)) { state.runRecords.push(Object.assign({ id: uid(), source: 'Garmin' }, r)); n++; } }
+    await save();
+    closeSheet();
+    show('records');
+    toast(n ? `Added ${n} record${n > 1 ? 's' : ''}` : 'Nothing added');
+    next();
+  });
+}
 
 // The activities read, each with its category to check. Ones already on the calendar are unticked.
 function activitiesSheet(rows, shots, next) {

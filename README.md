@@ -5,7 +5,7 @@ installed on your home screen. Plain HTML, CSS and JavaScript — no build step.
 
 ## Home screen
 - **Money** card: what you spent today and your net total (the same total as on the Accounts screen: bank accounts minus the card bills due this month / pay cycle). Tap it to open the money tracker.
-- **Fitness** card: this week's sessions by category and your latest recovery score. Tap it to open Fitness.
+- **Fitness** card: this week's sessions by category, your latest record (a new best lift or fastest run) and your latest recovery score. Tap it to open Fitness.
 - **Habits, Books / Music, Scheduler**: placeholders for modules to be built later.
 - **Backup** (for the whole app, every module at once):
   - **Export backup**: one file with everything in Rojak (Money, Fitness…). Screenshots are never included, so the file stays small.
@@ -43,10 +43,15 @@ own date). The money tracker's data stays where it always was, so earlier data a
 - Works offline, has light and dark mode
 
 ## Fitness module
-Coral-coloured, so it's easy to tell apart from Money. It keeps the metrics side of training (Garmin and Whoop already log the workouts themselves). Three tabs:
+Coral-coloured, so it's easy to tell apart from Money. It keeps the metrics side of training (Garmin and Whoop already log the workouts themselves). Four tabs:
 - **Calendar** – a month calendar showing what you did each day by category: Strength, Weightlifting, CrossFit, Gymnastics, Easy run, Tempo run, Intervals, Long run, Race, Cycling, Swimming, Other. Below it, this week's and this month's sessions by category. Tap a day to change a session's category or name, add one, or delete one; **+** adds a session for today.
   - **📷 Import from Garmin**: screenshots of Garmin Connect's **All Activities** list (one screenshot covers several days; overlapping screenshots are fine). Each activity's name, date and time is read, and its category comes from the name: the category with the longest matching word wins ("Tempo run" → Tempo run, "Gymnastics WOD" → Gymnastics, "Crossfit Strength" → Strength; "6x800" → Intervals). Check the categories and tap Save; activities already on the calendar are unticked. Change the category for a name (on import or by tapping a day) and that name gets it next time too.
   - **Edit categories ›** (top of the calendar, and in the day and import screens — **Done** takes you back): add, rename, reorder, recolour or delete categories, change their icon (female versions: 🏋️‍♀️ 🤸‍♀️ 🏃‍♀️ 🚴‍♀️ 🏊‍♀️ …), and set the words that put an activity in each one.
+- **Records** – your **fastest runs** (5K, 10K, half marathon, marathon: time, pace and date) and **max lifts** (log any weight × reps; each lift shows its heaviest set and best estimated 1-rep max, Epley: kg × (1 + reps/30)).
+  - Tap a lift for its best by reps (1RM, 3RM, 5RM…), a chart of estimated 1RM over time with your body weight over the same dates below it (separate charts, not two scales on one), and every entry with that day's body weight, recovery, HRV and sleep — to see how they line up. Saving a new best says so.
+  - Tap a distance for every time saved and a chart of them (faster at the top). Times can be typed with dots: `22.21`, `1.51.49`.
+  - **📷 Import Garmin Personal Records**: a screenshot of Garmin Connect's Personal Records → Running page reads the 5K, 10K, half and marathon times and dates. Each time is kept, so the history builds as your records come down; ones already saved are unticked.
+  - Weights logged in the earlier version's workouts were added as lifts (the best set of each movement in each workout).
 - **Body** – body weight, height and (optionally) body fat %, one entry per day. Shows the latest weight and the change since the entry before, BMI and body fat.
 - **Recovery** – recovery score, HRV, resting heart rate, sleep (h:mm or hours), sleep quality (Whoop's sleep performance or Garmin's sleep score), strain and Body Battery (Garmin), one entry per day. The recovery score is green (67%+), yellow (34–66%) or red, as in Whoop.
   - **📷 Import from Whoop / Garmin**: Whoop recovery and strain pages (recovery %, HRV, resting heart rate, sleep performance, strain, hours of sleep where shown); Garmin At a Glance and HRV / sleep pages (resting heart rate, HRV, Body Battery, sleep score — At a Glance shows the 7-day average HRV, which doesn't replace Whoop's last-night HRV). Numbers read go over that day's entry (the others stay). When Whoop and Garmin give different numbers for the same thing — in one import, or one app today and the other later — the **worse** one is used (lower recovery, HRV, sleep and Body Battery; higher resting heart rate and strain), and both are shown under it.
@@ -54,7 +59,7 @@ Coral-coloured, so it's easy to tell apart from Money. It keeps the metrics side
 Screenshots are read on the phone with the same bundled reader as Money (`money/ocr`) and never saved or uploaded; tap one in the check screen to see it bigger.
 
 Saved in the shared store under `mod:fitness`, every entry with its own `date` (YYYY-MM-DD), so other modules (e.g. a habit tracker) can read it:
-`categories` (`{id, name, icon, color, words}`, in the order shown), `activities` (`{date, time, name, catId, source}`), `nameCats` (`{'activity name': catId}`, categories picked for a name),
+`categories` (`{id, name, icon, color, words}`, in the order shown), `activities` (`{date, time, name, catId, source}`), `nameCats` (`{'activity name': catId}`, categories picked for a name), `lifts` (`{date, name, weightKg, reps}`), `runRecords` (`{date, distance: 5k|10k|half|full, timeSec}`),
 `bodyMeasurements` (`{date, weightKg, heightCm, bodyFatPct}`), `recoveryDays` (`{date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, strain, bodyBattery, sources}`). Empty numbers are saved as `null`. Workouts logged with the earlier version are kept in `workouts` / `workoutTypes` and shown on the calendar.
 
 ## Publish with GitHub Pages
@@ -79,7 +84,7 @@ On iPhone, the home-screen app and Safari keep separate data — use the home-sc
 - `core/avatar.js` – her drawing, its monthly hair colours and her waving hand
 - `core/cat.js` – the cat and its monthly breeds
 - `money/` – the money tracker: `index.html`, `style.css`, `app.js` (accounts, transactions, categories, reconciliation, settings), `plan.js` (recurring payments, savings projects, trips and the forecast)
-- `fitness/` – the fitness module: `index.html`, `style.css`, `app.js` (calendar and categories, body measurements, recovery), `import.js` (reading screenshots)
+- `fitness/` – the fitness module: `index.html`, `style.css`, `app.js` (calendar and categories, records, body measurements, recovery), `import.js` (reading screenshots)
 - `money/ocr/` – Tesseract.js (Apache 2.0, licences included) for reading screenshots (Money balances and receipts, Fitness imports); loaded only when you pick a screenshot
 - `manifest.json`, `sw.js`, `rojak-icon*`, `rojak-apple-touch-icon.png` – make it installable and work offline (`icon-v2.svg`, `apple-touch-icon-v2.png` are the money tracker's own tab icon)
 

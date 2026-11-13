@@ -1,5 +1,5 @@
-/* Fitness — a calendar of what you did each day, body measurements and recovery, stored on this device in the
-   shared Rojak store.
+/* Fitness — a calendar of what you did each day, your records (max lifts, fastest runs), body measurements and
+   recovery, stored on this device in the shared Rojak store.
 
    Saved under 'mod:fitness' (see ../core/store.js). Every entry has its own `date` (YYYY-MM-DD) for the day it
    belongs to, and the store adds `savedAt` / `updatedAt`, so other modules (e.g. a habit tracker) can read it:
@@ -7,6 +7,8 @@
                           the kinds of session shown on the calendar, in the order shown
      activities:        { id, date, time ('19:19' or null), name (as in Garmin), catId, source }   the calendar
      nameCats:          { 'activity name (lower case)': catId }   categories you picked for a name, used next time
+     lifts:             { id, date, name, weightKg, reps, source }   any weight × reps; bests and est. 1RM worked out
+     runRecords:        { id, date, distance: '5k' | '10k' | 'half' | 'full', timeSec, source }   run times
      bodyMeasurements:  { id, date, weightKg, heightCm, bodyFatPct }          one per day
      recoveryDays:      { id, date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, strain, bodyBattery, source,
                           sources: { field: 'Whoop' | 'Garmin' } for numbers read from a screenshot }  one per day
@@ -54,13 +56,13 @@ function guessCat(name) {
 }
 
 /* ---------- State ---------- */
-const emptyState = () => ({ categories: [], activities: [], nameCats: {}, bodyMeasurements: [], recoveryDays: [], settings: {} });
+const emptyState = () => ({ categories: [], activities: [], nameCats: {}, lifts: [], runRecords: [], bodyMeasurements: [], recoveryDays: [], settings: {} });
 let state = emptyState();
 
 async function load() {
   const saved = await Rojak.load('fitness');
   state = Object.assign(emptyState(), saved || {});
-  for (const k of ['categories', 'activities', 'bodyMeasurements', 'recoveryDays']) if (!Array.isArray(state[k])) state[k] = [];
+  for (const k of ['categories', 'activities', 'lifts', 'runRecords', 'bodyMeasurements', 'recoveryDays']) if (!Array.isArray(state[k])) state[k] = [];
   if (!state.nameCats || typeof state.nameCats !== 'object') state.nameCats = {};
   if (!state.settings || typeof state.settings !== 'object') state.settings = {};
   if (migrate() && saved) await save();
@@ -81,6 +83,18 @@ function migrate() {
       for (const a of state.activities) if (a.catId === 'strength' && guessCat(a.name) === 'weightlifting') a.catId = 'weightlifting';
     }
     state.settings.catsV2 = true;
+    changed = true;
+  }
+  // Weights logged in the earlier version's workouts become lifts: the best set of each movement in each workout.
+  if (!state.settings.liftsFromWorkouts) {
+    for (const w of state.workouts || []) for (const m of w.movements || []) {
+      if (!w.date || !m.name || (m.unit && m.unit !== 'reps')) continue;
+      const sets = (m.sets || []).filter((x) => x.weightKg > 0 && x.reps >= 1);
+      if (!sets.length) continue;
+      const b = sets.reduce((p, q) => (e1rm(q.weightKg, q.reps) > e1rm(p.weightKg, p.reps) ? q : p));
+      state.lifts.push({ id: uid(), date: w.date, name: m.name, weightKg: b.weightKg, reps: b.reps, source: 'workout log' });
+    }
+    state.settings.liftsFromWorkouts = true;
     changed = true;
   }
   // Workouts logged in the earlier version go on the calendar (the workouts themselves are kept as they were).
@@ -172,6 +186,7 @@ function toast(msg) {
 /* ---------- Views ---------- */
 const VIEWS = {
   calendar: { title: 'Calendar', add: 'Add a session', open: () => daySheet(today(), true) },
+  records: { title: 'Records', add: 'Add a record', open: () => recordChoice() },
   body: { title: 'Body', add: 'Add body measurement', open: () => bodySheet() },
   recovery: { title: 'Recovery', add: 'Add recovery', open: () => recoverySheet() }
 };
@@ -213,6 +228,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#she
 
 function render() {
   if (currentView === 'calendar') renderCalendar();
+  if (currentView === 'records') renderRecords();
   if (currentView === 'body') renderBody();
   if (currentView === 'recovery') renderRecovery();
 }
@@ -384,6 +400,218 @@ function catSheet(id) {
     for (const [k, v] of Object.entries(state.nameCats)) if (v === c.id) delete state.nameCats[k];
     state.categories = state.categories.filter((x) => x !== c);
     await save(); render(); catsSheet();
+  });
+}
+
+/* ---------- Records: max lifts and fastest runs ---------- */
+const RUNS = [
+  { id: '5k', name: '5K', km: 5 },
+  { id: '10k', name: '10K', km: 10 },
+  { id: 'half', name: 'Half marathon', km: 21.0975 },
+  { id: 'full', name: 'Marathon', km: 42.195 }
+];
+const runOf = (id) => RUNS.find((r) => r.id === id) || RUNS[0];
+const LIFT_NAMES = ['Back squat', 'Front squat', 'Overhead squat', 'Deadlift', 'Bench press', 'Strict press', 'Push press', 'Push jerk',
+  'Snatch', 'Power snatch', 'Clean', 'Power clean', 'Clean and jerk', 'Jerk', 'Thruster', 'Weighted pull-up'];
+// Estimated one-rep max (Epley): what a set of `reps` at `kg` suggests you could lift once.
+const e1rm = (kg, reps) => (reps <= 1 ? kg : kg * (1 + reps / 30));
+const liftNames = () => [...new Set(state.lifts.map((l) => l.name))].sort((a, b) => a.localeCompare(b));
+const liftsOf = (name) => state.lifts.filter((l) => sameName(l.name, name)).sort((a, b) => b.date.localeCompare(a.date) || (b.savedAt || '').localeCompare(a.savedAt || ''));
+const best1rm = (list) => list.reduce((b, l) => (!b || e1rm(l.weightKg, l.reps) > e1rm(b.weightKg, b.reps) ? l : b), null);
+const heaviest = (list) => list.reduce((b, l) => (!b || l.weightKg > b.weightKg || (l.weightKg === b.weightKg && l.reps > b.reps) ? l : b), null);
+const runsOf = (id) => state.runRecords.filter((r) => r.distance === id).sort((a, b) => b.date.localeCompare(a.date));
+const fastest = (list) => list.reduce((b, r) => (!b || r.timeSec < b.timeSec ? r : b), null);
+const fmtKg = (kg) => `${fmt(kg, 2)} kg`;
+const paceOf = (r) => `${fmtTime(r.timeSec / runOf(r.distance).km)} /km`;
+// Your body weight on a day (the latest measurement on or before it) and that day's recovery.
+const weightOn = (iso) => state.bodyMeasurements.filter((m) => m.weightKg != null && m.date <= iso).sort((a, b) => b.date.localeCompare(a.date))[0];
+const recoveryOn = (iso) => state.recoveryDays.find((r) => r.date === iso);
+function dayContext(iso) {
+  const w = weightOn(iso), r = recoveryOn(iso);
+  return [w ? `Body weight ${fmt(w.weightKg, 1)} kg${w.date !== iso ? ` (${niceDate(w.date)})` : ''}` : '',
+    r && r.recoveryScore != null ? `Recovery ${fmt(r.recoveryScore, 0)}%` : '', r && r.hrvMs != null ? `HRV ${fmt(r.hrvMs, 0)}` : '',
+    r && r.sleepHours != null ? `Sleep ${fmtSleep(r.sleepHours)}` : ''].filter(Boolean).join(' · ');
+}
+
+// A small line chart of one measure over time: [{ date, v, label }] (oldest first). `invert` puts lower values at the
+// top (faster times). Tap a point to see it.
+function lineChart(points, opts = {}) {
+  if (points.length < 2) return '';
+  const W = 340, H = 150, L = 46, R = 12, T = 12, B = 24;
+  const t = points.map((p) => dayDate(p.date).getTime());
+  const t0 = Math.min(...t), t1 = Math.max(...t);
+  let lo = Math.min(...points.map((p) => p.v)), hi = Math.max(...points.map((p) => p.v));
+  const padV = (hi - lo) * 0.12 || Math.abs(hi) * 0.05 || 1;
+  lo -= padV; hi += padV;
+  const x = (i) => (t1 === t0 ? (L + W - R) / 2 : L + ((t[i] - t0) / (t1 - t0)) * (W - L - R));
+  const y = (v) => (opts.invert ? T + ((v - lo) / (hi - lo)) * (H - T - B) : H - B - ((v - lo) / (hi - lo)) * (H - T - B));
+  const ticks = [lo + padV, (lo + hi) / 2, hi - padV];
+  // "1 Sep" within one year; "Sep 2025" across years.
+  const oneYear = points[0].date.slice(0, 4) === points[points.length - 1].date.slice(0, 4);
+  const short = (iso) => dayDate(iso).toLocaleDateString(undefined, oneYear ? { day: 'numeric', month: 'short' } : { month: 'short', year: 'numeric' });
+  const path = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
+  return `<figure class="chart">
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.title || '')}">
+      ${ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" class="grid"/><text x="${L - 6}" y="${(y(v) + 4).toFixed(1)}" class="tick" text-anchor="end">${esc(opts.fmt ? opts.fmt(v) : fmt(v, 0))}</text>`).join('')}
+      <text x="${L}" y="${H - 6}" class="tick">${esc(short(points[0].date))}</text>
+      <text x="${W - R}" y="${H - 6}" class="tick" text-anchor="end">${esc(short(points[points.length - 1].date))}</text>
+      <path d="${path}" class="line"/>
+      ${points.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="4.5" class="dot"/>`).join('')}
+      ${points.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="14" class="hit" data-pt="${esc(p.label)}"><title>${esc(p.label)}</title></circle>`).join('')}
+    </svg>
+    <figcaption class="readout muted small">${esc(points[points.length - 1].label)}</figcaption></figure>`;
+}
+document.addEventListener('click', (e) => {
+  const pt = e.target.closest('[data-pt]');
+  if (!pt) return;
+  const fig = pt.closest('figure');
+  $('.readout', fig).textContent = pt.dataset.pt;
+  $$('.dot', fig).forEach((d, i) => d.classList.toggle('on', $$('.hit', fig)[i] === pt));
+});
+
+function renderRecords() {
+  const runs = RUNS.map((d) => { const b = fastest(runsOf(d.id)); return `<button type="button" class="tile run-tile" data-run="${d.id}">
+      <div class="label">${esc(d.name)}</div><div class="value">${b ? esc(fmtTime(b.timeSec)) : '–'}</div>
+      <div class="label">${b ? `${esc(paceOf(b))} · ${esc(niceDate(b.date))}` : 'Tap to add'}</div></button>`; }).join('');
+  const names = liftNames();
+  const lifts = names.map((n) => {
+    const list = liftsOf(n), b = best1rm(list), h = heaviest(list);
+    return `<button class="item" data-lift="${esc(n)}">
+      <span class="ico" aria-hidden="true">🏋️‍♀️</span>
+      <div class="left"><div class="title">${esc(n)}</div>
+        <div class="sub">Heaviest ${esc(fmtKg(h.weightKg))} × ${h.reps} · ${esc(niceDate(h.date))}</div></div>
+      <div class="amt">${esc(fmtKg(round(e1rm(b.weightKg, b.reps), 1)))}<div class="sub">est. 1RM</div></div></button>`;
+  }).join('');
+  $('#records').innerHTML = `<div class="card"><h2>Fastest runs</h2><div class="tiles runs">${runs}</div></div>
+    <div class="card"><div class="card-head"><h2>Max lifts</h2><button type="button" class="link-btn" id="addLift">+ Log a lift</button></div>
+      ${names.length ? `<div class="list">${lifts}</div>` : '<div class="empty">No lifts yet.<br>Log any weight × reps — your best and estimated 1-rep max are worked out for each lift.</div>'}</div>`;
+  $$('[data-run]').forEach((b) => b.addEventListener('click', () => runSheet(b.dataset.run)));
+  $$('[data-lift]').forEach((b) => b.addEventListener('click', () => liftSheet(b.dataset.lift)));
+  $('#addLift').addEventListener('click', () => liftForm(null));
+}
+function recordChoice() {
+  openSheet('Add a record', `<div class="form">
+    <button type="button" class="btn" id="chLift">🏋️‍♀️ Log a lift</button>
+    <button type="button" class="btn secondary" id="chRun">🏃‍♀️ Add a run time</button></div>`);
+  $('#chLift').addEventListener('click', () => liftForm(null));
+  $('#chRun').addEventListener('click', () => runForm(null));
+}
+
+// One lift: best by reps, est. 1RM over time (with body weight below on the same dates), and every entry.
+function liftSheet(name) {
+  const list = liftsOf(name);
+  if (!list.length) { closeSheet(); render(); return; }
+  const b = best1rm(list);
+  const byReps = {};
+  for (const l of list) if (!byReps[l.reps] || l.weightKg > byReps[l.reps].weightKg) byReps[l.reps] = l;
+  // Best est. 1RM per day.
+  const days = {};
+  for (const l of list) { const v = e1rm(l.weightKg, l.reps); if (!days[l.date] || v > days[l.date].v) days[l.date] = { v, l }; }
+  const pts = Object.keys(days).sort().map((d) => ({ date: d, v: round(days[d].v, 1), label: `${niceDate(d)}: est. 1RM ${fmtKg(round(days[d].v, 1))} (${fmtKg(days[d].l.weightKg)} × ${days[d].l.reps})` }));
+  const from = pts.length ? pts[0].date : null, to = pts.length ? pts[pts.length - 1].date : null;
+  const bw = from ? state.bodyMeasurements.filter((m) => m.weightKg != null && m.date >= from && m.date <= to).sort((a, c) => a.date.localeCompare(c.date))
+    .map((m) => ({ date: m.date, v: m.weightKg, label: `${niceDate(m.date)}: ${fmt(m.weightKg, 1)} kg` })) : [];
+  openSheet(name, `<div class="form">
+    <div class="tiles"><div class="tile"><div class="label">Est. 1RM</div><div class="value">${fmt(round(e1rm(b.weightKg, b.reps), 1), 1)}<small>kg</small></div><div class="label">${esc(fmtKg(b.weightKg))} × ${b.reps} · ${esc(niceDate(b.date))}</div></div>
+      <div class="tile"><div class="label">Best by reps</div><div class="rep-maxes">${Object.keys(byReps).sort((p, q) => p - q).map((r) => `<div><strong>${r}RM</strong> ${esc(fmtKg(byReps[r].weightKg))}</div>`).join('')}</div></div></div>
+    ${pts.length > 1 ? `<div><div class="label-t">Est. 1RM (kg)</div>${lineChart(pts, { title: `${name} estimated 1-rep max over time`, fmt: (v) => fmt(v, 0) })}</div>` : ''}
+    ${bw.length > 1 ? `<div><div class="label-t">Body weight (kg), same dates</div>${lineChart(bw, { title: 'Body weight over the same dates', fmt: (v) => fmt(v, 1) })}</div>` : ''}
+    <div class="list">${list.map((l) => { const ctx = dayContext(l.date); return `<button type="button" class="item" data-l="${l.id}">
+      <div class="left"><div class="title">${esc(fmtKg(l.weightKg))} × ${l.reps}${l === b ? ' 🏆' : ''}</div><div class="sub">${esc(niceDate(l.date))}${ctx ? ' · ' + esc(ctx) : ''}</div></div>
+      <div class="amt">${esc(fmt(round(e1rm(l.weightKg, l.reps), 1), 1))}<div class="sub">est. 1RM</div></div></button>`; }).join('')}</div>
+    <button type="button" class="btn" id="liftAgain">+ Log ${esc(name)}</button></div>`);
+  $$('[data-l]').forEach((el) => el.addEventListener('click', () => liftForm(el.dataset.l)));
+  $('#liftAgain').addEventListener('click', () => liftForm(null, name));
+}
+function liftForm(id, name) {
+  const ex = id ? state.lifts.find((l) => l.id === id) : null;
+  const names = [...new Set(liftNames().concat(LIFT_NAMES))];
+  openSheet(ex ? 'Edit lift' : 'Log a lift', `<form class="form" id="lForm" novalidate>
+      <label>Lift <input id="lName" list="liftNames" value="${esc(ex ? ex.name : name || '')}" placeholder="e.g. Back squat" autocomplete="off"></label>
+      <datalist id="liftNames">${names.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+      <div class="grid2">
+        <label>Weight (kg) <input id="lKg" inputmode="decimal" placeholder="e.g. 80" value="${ex ? ex.weightKg : ''}"></label>
+        <label>Reps <input id="lReps" inputmode="numeric" placeholder="e.g. 3" value="${ex ? ex.reps : ''}"></label>
+      </div>
+      <label>Date <input type="date" id="lDate" value="${esc(ex ? ex.date : today())}"></label>
+      <div class="hint" id="lEst">&nbsp;</div>
+      <button class="btn" type="submit">Save</button>
+      ${ex ? '<button type="button" class="btn danger" id="lDel">Delete</button>' : ''}
+    </form>`);
+  const est = () => { const kg = num($('#lKg').value), r = num($('#lReps').value);
+    $('#lEst').textContent = kg > 0 && r >= 1 ? `Estimated 1-rep max: ${fmtKg(round(e1rm(kg, r), 1))}` : ' '; };
+  $('#lKg').addEventListener('input', est); $('#lReps').addEventListener('input', est); est();
+  if (!ex && !name) $('#lName').focus();
+  $('#lForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    let n = $('#lName').value.trim().replace(/\s+/g, ' ');
+    const kg = num($('#lKg').value), reps = num($('#lReps').value), date = $('#lDate').value;
+    if (!n) return toast('Which lift?');
+    if (!(kg > 0 && kg < 600)) return toast('Check the weight (kg)');
+    if (!(reps >= 1 && reps <= 50 && reps % 1 === 0)) return toast('Check the reps');
+    if (!date) return toast('Pick a date');
+    // Same lift as one you have, whatever the capitals.
+    n = names.find((x) => sameName(x, n)) || n.charAt(0).toUpperCase() + n.slice(1);
+    const before = best1rm(liftsOf(n).filter((l) => l !== ex));
+    const entry = { name: n, weightKg: round(kg, 2), reps, date };
+    if (ex) Object.assign(ex, entry); else state.lifts.push(Object.assign({ id: uid(), source: 'manual' }, entry));
+    await save();
+    render();
+    liftSheet(n);
+    toast(before && e1rm(kg, reps) > e1rm(before.weightKg, before.reps) ? `🏆 New best ${n}: est. 1RM ${fmtKg(round(e1rm(kg, reps), 1))}` : 'Saved');
+  });
+  if (ex) $('#lDel').addEventListener('click', async () => {
+    if (!confirm(`Delete ${ex.name} ${fmtKg(ex.weightKg)} × ${ex.reps}?`)) return;
+    state.lifts = state.lifts.filter((l) => l !== ex);
+    await save(); render(); liftSheet(ex.name); toast('Deleted');
+  });
+}
+
+// One distance: the fastest, times over the years, and every time saved.
+function runSheet(id) {
+  const d = runOf(id), list = runsOf(id), b = fastest(list);
+  const pts = [...list].reverse().map((r) => ({ date: r.date, v: r.timeSec, label: `${niceDate(r.date)}: ${fmtTime(r.timeSec)} (${paceOf(r)})` }));
+  openSheet(d.name, `<div class="form">
+    ${b ? `<div class="tiles"><div class="tile"><div class="label">Fastest</div><div class="value">${esc(fmtTime(b.timeSec))}</div><div class="label">${esc(paceOf(b))} · ${esc(niceDate(b.date))}</div></div></div>` : '<div class="empty">No times yet.</div>'}
+    ${pts.length > 1 ? `<div><div class="label-t">Time (faster at the top)</div>${lineChart(pts, { title: `${d.name} times over time`, invert: true, fmt: (v) => fmtTime(v) })}</div>` : ''}
+    <div class="list">${list.map((r) => { const ctx = dayContext(r.date); return `<button type="button" class="item" data-rr="${r.id}">
+      <div class="left"><div class="title">${esc(fmtTime(r.timeSec))}${r === b ? ' 🏆' : ''}</div><div class="sub">${esc(niceDate(r.date))} · ${esc(paceOf(r))}${ctx ? ' · ' + esc(ctx) : ''}</div></div></button>`; }).join('')}</div>
+    <button type="button" class="btn" id="runAdd">+ Add a ${esc(d.name)} time</button>
+    <div class="hint">Or import a screenshot of Garmin Connect's <strong>Personal Records</strong> page (📷 at the top of Records).</div></div>`);
+  $$('[data-rr]').forEach((el) => el.addEventListener('click', () => runForm(el.dataset.rr)));
+  $('#runAdd').addEventListener('click', () => runForm(null, id));
+}
+function runForm(rid, distance) {
+  const ex = rid ? state.runRecords.find((r) => r.id === rid) : null;
+  const sel = ex ? ex.distance : distance || '5k';
+  openSheet(ex ? 'Edit run time' : 'Add a run time', `<form class="form" id="rrForm" novalidate>
+      <label>Distance <select id="rrDist">${RUNS.map((d) => `<option value="${d.id}" ${d.id === sel ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select></label>
+      <label>Time <span class="hint">e.g. 22:21 or 1:51:49 (a dot works as ":")</span><input id="rrTime" inputmode="decimal" placeholder="e.g. 22.21" value="${ex ? esc(fmtTime(ex.timeSec)) : ''}" autocomplete="off"></label>
+      <label>Date <input type="date" id="rrDate" value="${esc(ex ? ex.date : today())}"></label>
+      <div class="hint" id="rrPace">&nbsp;</div>
+      <button class="btn" type="submit">Save</button>
+      ${ex ? '<button type="button" class="btn danger" id="rrDel">Delete</button>' : ''}
+    </form>`);
+  const pace = () => { const s = parseTime($('#rrTime').value); $('#rrPace').textContent = s > 0 ? `${fmtTime(s)} · ${fmtTime(s / runOf($('#rrDist').value).km)} /km` : ' '; };
+  $('#rrTime').addEventListener('input', pace); $('#rrDist').addEventListener('change', pace); pace();
+  $('#rrForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const distance = $('#rrDist').value, timeSec = parseTime($('#rrTime').value), date = $('#rrDate').value;
+    const per = timeSec / runOf(distance).km;
+    if (!(timeSec > 0) || per < 120 || per > 1200) return toast('Check the time (e.g. 22:21 or 1:51:49)');
+    if (!date) return toast('Pick a date');
+    const before = fastest(runsOf(distance).filter((r) => r !== ex));
+    const entry = { distance, timeSec, date };
+    if (ex) Object.assign(ex, entry); else state.runRecords.push(Object.assign({ id: uid(), source: 'manual' }, entry));
+    await save();
+    render();
+    runSheet(distance);
+    toast(before && timeSec < before.timeSec ? `🏆 New fastest ${runOf(distance).name}: ${fmtTime(timeSec)}` : 'Saved');
+  });
+  if (ex) $('#rrDel').addEventListener('click', async () => {
+    if (!confirm(`Delete the ${runOf(ex.distance).name} time ${fmtTime(ex.timeSec)}?`)) return;
+    state.runRecords = state.runRecords.filter((r) => r !== ex);
+    await save(); render(); runSheet(ex.distance); toast('Deleted');
   });
 }
 

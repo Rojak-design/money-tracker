@@ -83,11 +83,26 @@ function dayLabel(iso) {
   return new Date(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 }
 const newest = (list) => [...(list || [])].sort((a, b) => (b.date + (b.savedAt || '')).localeCompare(a.date + (a.savedAt || '')))[0];
+// The newest best: a lift that beat that lift's estimated 1-rep max at the time, or a run time faster than before.
+function latestRecord(f) {
+  const e1 = (l) => (l.reps <= 1 ? l.weightKg : l.weightKg * (1 + l.reps / 30));
+  const found = [];
+  const lifts = ((f && f.lifts) || []).slice().sort((a, b) => a.date.localeCompare(b.date));
+  const best = {};
+  for (const l of lifts) { const k = l.name.toLowerCase(); if (best[k] == null || e1(l) > best[k]) { best[k] = e1(l); found.push({ date: l.date, value: `${+e1(l).toFixed(1)} kg`, what: `${l.name} est. 1RM` }); } }
+  const names = { '5k': '5K', '10k': '10K', half: 'Half marathon', full: 'Marathon' };
+  const runs = ((f && f.runRecords) || []).slice().sort((a, b) => a.date.localeCompare(b.date));
+  const fast = {};
+  const t = (s) => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return h ? `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}` : `${m}:${String(x).padStart(2, '0')}`; };
+  for (const r of runs) if (fast[r.distance] == null || r.timeSec < fast[r.distance]) { fast[r.distance] = r.timeSec; found.push({ date: r.date, value: t(r.timeSec), what: `Fastest ${names[r.distance] || r.distance}` }); }
+  return found.sort((a, b) => b.date.localeCompare(a.date))[0] || null;
+}
 function renderFitness(f) {
   const el = $('#fitnessSummary');
   const acts = (f && f.activities) || [];
   const r = newest(((f && f.recoveryDays) || []).filter((x) => x.recoveryScore != null));
-  if (!acts.length && !r) {
+  const pr = latestRecord(f);
+  if (!acts.length && !r && !pr) {
     el.innerHTML = `<div class="muted small" style="grid-column:1/-1">Nothing yet. Tap to import your Garmin activities, or add your weight or recovery.</div>`;
     return;
   }
@@ -103,6 +118,7 @@ function renderFitness(f) {
   el.innerHTML = `
     <div class="stat"><div class="label">This week</div><div class="value">${week.length}<small> session${week.length === 1 ? '' : 's'}</small></div>
       <div class="sub">${icons || 'None yet'}</div></div>
+    ${pr ? `<div class="stat wide"><div class="label">Latest record</div><div class="value">${esc(pr.value)}</div><div class="sub">${esc(pr.what)} · ${esc(dayLabel(pr.date))}</div></div>` : ''}
     <div class="stat"><div class="label">Recovery</div><div class="value">${r ? `${Math.round(r.recoveryScore)}<small>%</small>` : '–'}</div>
       <div class="sub">${r ? esc(dayLabel(r.date)) : 'None yet'}</div></div>`;
 }
