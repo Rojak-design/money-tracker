@@ -204,3 +204,12 @@ label.check input { width: 22px; height: 22px; flex: none; accent-color: var(--p
 /* Rest between sets, under each movement's name */
 .rest-row { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--muted); }
 .rest-row input { width: 130px; flex: none; padding: 8px 10px; background: var(--card); text-align: center; }
+
+/* Intervals: one row per rep */
+.int-row { display: grid; grid-template-columns: 22px repeat(4, minmax(0, 1fr)) 30px; gap: 4px; align-items: center; margin-bottom: 6px; }
+.int-row input { padding: 9px 4px; background: var(--card); text-align: center; font-size: 15px; }
+.int-row .n { color: var(--muted); font-size: 13px; font-weight: 600; text-align: center; }
+.int-row .x-btn { width: 30px; }
+.int-head { font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 0; }
+.int-head span { text-align: center; }
+.box h3 .hint { font-weight: 400; margin-left: 4px; }
