@@ -441,7 +441,7 @@ function accountSheet(id) {
     if (upcoming) parts.push(['🔁 Recurring payments still to come', upcoming]);
     let html = `<div class="kv"><span class="k">${label}</span><span class="v">${money(st.total)}</span></div>`;
     if (parts.length > 1 || st.paid) html += parts.map(([k, v]) => `<div class="kv sub"><span class="k">${k}</span><span class="v">${money(v)}</span></div>`).join('');
-    if (isLast && st.paid) html += `<div class="kv sub"><span class="k">Paid since</span><span class="v">−${money(st.paid)}</span></div>
+    if (st.paid) html += `<div class="kv sub"><span class="k">Paid</span><span class="v">−${money(st.paid)}</span></div>
       <div class="kv sub"><span class="k">Left to pay</span><span class="v">${money(st.left)}</span></div>`;
     return html;
   };

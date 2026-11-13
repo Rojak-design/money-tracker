@@ -505,8 +505,40 @@ function cardSpendBetween(id, from, to) {
 //  planned   – entries dated after today (e.g. PayLater instalments logged ahead);
 //  recurring – recurring payments on this card due in the statement that haven't been logged
 //              (logged ones are already in spent / planned); missed lists the past-due ones not logged;
-//  paid      – card payments made after the statement closed, up to the next statement day.
+//  paid      – card payments put towards this statement (see cardPayments below).
 function cardStatement(a, w) {
+  const res = cardStatementRaw(a, w);
+  res.paid = cardPayments(a).get(w.to) || 0;
+  res.left = Math.max(0, res.total - res.paid);
+  return res;
+}
+// Card payments since the card's "owed as of" date (including that day — the balance doesn't include them)
+// pay off the oldest bill first: the statement holding the amount you entered, then each later one in turn.
+// Paying more than a bill carries over to the next, so once everything's paid, every bill shows 0 left.
+// Returns a Map: statement date -> amount paid towards it.
+function cardPayments(a) {
+  const from = a.startDate || '';
+  let pool = 0;
+  let first = a.startDate || null;
+  for (const x of state.transactions) {
+    if (x.accountId !== a.id || x.date < from) continue;
+    if (x.transferId) pool += x.type === 'income' ? x.amount : -x.amount;
+    else if (!first || x.date < first) first = x.date;
+  }
+  const out = new Map();
+  if (pool <= 0 || !first) return out;
+  let w = cardStatementWindow(a, first);
+  for (let guard = 0; guard < 600 && pool > 0; guard++, w = cardStatementWindow(a, addDaysISO(w.to, 1))) {
+    const st = cardStatementRaw(a, w);
+    const use = Math.min(pool, Math.max(0, st.total));
+    if (use) { out.set(w.to, use); pool -= use; }
+    if (w.to > addMonthsISO(today(), 24)) break;
+  }
+  // Anything left over (paid ahead of spending) is credit on the card: it counts towards the current statement.
+  if (pool > 0) { const cur = cardStatementWindow(a, today()).to; out.set(cur, (out.get(cur) || 0) + pool); }
+  return out;
+}
+function cardStatementRaw(a, w) {
   const t = today();
   const from = a.startDate && a.startDate > w.from ? a.startDate : w.from;
   const res = { ...w, opening: 0, spent: 0, planned: 0, recurring: 0, missed: [], paid: 0 };
@@ -533,11 +565,7 @@ function cardStatement(a, w) {
       }
     }
   }
-  const nextTo = cardStatementWindow(a, addDaysISO(w.to, 1)).to;
-  res.paid = state.transactions.filter((x) => x.accountId === a.id && x.transferId && x.type === 'income' && x.date > w.to && x.date <= nextTo)
-    .reduce((s, x) => s + x.amount, 0);
   res.total = res.opening + res.spent + res.planned + res.recurring;
-  res.left = Math.max(0, res.total - res.paid);
   return res;
 }
 
