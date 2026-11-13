@@ -2,7 +2,7 @@
 // When you change any app file, bump this version number AND the ?v= numbers in index.html, money/index.html and
 // fitness/index.html
 // so phones get the update with all files matching.
-const VERSION = 37;
+const VERSION = 38;
 const CACHE = 'rojak-v' + VERSION;
 const FILES = [
   './',
@@ -46,10 +46,13 @@ self.addEventListener('activate', (e) => {
 });
 
 // Network first (so updates show up), fall back to the cache when offline.
+// GitHub Pages lets browsers keep files for 10 minutes; 'no-cache' asks the server each time whether a file has
+// changed (a quick check), so an update shows up as soon as it's published.
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
+  const sameOrigin = new URL(e.request.url).origin === location.origin;
   e.respondWith(
-    fetch(e.request)
+    fetch(sameOrigin ? new Request(e.request.url, { cache: 'no-cache', credentials: 'same-origin' }) : e.request)
       .then((res) => {
         if (res.ok && new URL(e.request.url).origin === location.origin) {
           const copy = res.clone();

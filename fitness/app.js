@@ -199,6 +199,14 @@ function openSheet(title, html) {
 function closeSheet() {
   $('#sheet').classList.add('hidden');
   document.body.style.overflow = '';
+  if (updateReady) location.reload();
+}
+// When a new version of the app arrives, reload to use it — but not while a form is open.
+let updateReady = false;
+if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if ($('#sheet').classList.contains('hidden')) location.reload(); else updateReady = true;
+  });
 }
 $('#sheet').addEventListener('click', (e) => { if (e.target.closest('[data-close]')) closeSheet(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#sheet').classList.contains('hidden')) closeSheet(); });
