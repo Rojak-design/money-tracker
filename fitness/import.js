@@ -8,8 +8,8 @@
      Garmin Connect  All Activities list               each activity's name, date and time → the calendar
                      Personal Records (Running)        fastest 5K, 10K, half marathon, marathon with dates
                      At a Glance and other day pages   resting heart rate, HRV, Body Battery, sleep score
-     Whoop           recovery, strain and sleep pages  recovery %, HRV, resting heart rate, sleep performance,
-                                                       strain, hours of sleep */
+     Whoop           recovery and sleep pages          recovery %, HRV, resting heart rate, sleep performance,
+                                                       hours of sleep (Last Night's Sleep) */
 'use strict';
 
 /* ---------- Reading the text in a screenshot ---------- */
@@ -201,7 +201,7 @@ function parseRecords(shot) {
 /* ---------- What kind of screenshot is it? ---------- */
 function detect(shot) {
   const t = shot.text;
-  if (/WH\W?OO\W?P|HEART RATE VARIABILITY|SLEEP PERFORMANCE|DAY STRAIN|^\W*STRAIN\W*$/m.test(t)) return 'whoop';
+  if (/WH\W?OO\W?P|HEART RATE VARIABILITY|SLEEP PERFORMANCE|HOURS\s+OF\s+SLEEP|LAST NIGHT.?S SLEEP|DAY STRAIN|^\W*STRAIN\W*$/im.test(t)) return 'whoop';
   if (/personal\s*records/i.test(t) || /\bhalf\s*marathon\b/i.test(t)) { shot.prs = parseRecords(shot); if (shot.prs.length) return 'garminRecords'; }
   shot.acts = parseActivityList(shot);
   if (shot.acts.length) return 'garminList';
@@ -219,21 +219,23 @@ async function parseWhoop(shot, rec) {
     const v = above ? firstNumber(above.text) : null;
     if (v != null && v <= 100) put(rec, 'recoveryScore', v, 'Whoop', 'Whoop recovery');
   }
-  const si = L.findIndex((l) => /^\W*STRAIN\W*$/.test(l.text));
-  if (si > 0) {
-    const above = L.slice(Math.max(0, si - 2), si).reverse().find((l) => /^\W*\d{1,2}[.,]\d\W*$/.test(l.text));
-    if (above) put(rec, 'strain', firstNumber(above.text), 'Whoop', 'Whoop strain');
+  // Last Night's Sleep: the hours of sleep are the big time just under "HOURS OF SLEEP" (the smaller one under it is
+  // the 30-day average).
+  const hi = L.findIndex((l) => /HOURS\s+OF\s+SLEEP/i.test(l.text));
+  if (hi >= 0) {
+    const under = L.slice(hi + 1, hi + 3).find((l) => /^\W*\d{1,2}:\d{2}\W*$/.test(l.text));
+    const v = under ? firstNumber(under.text, true) : null;
+    if (fits('sleepHours', v)) put(rec, 'sleepHours', v, 'Whoop', 'Whoop hours of sleep');
   }
   const rows = [
     [/HEART RATE VARIABILITY|\bHRV\b/, 'hrvMs', 'Whoop HRV'],
     [/RESTING HEART RATE/, 'restingHr', 'Whoop resting heart rate'],
     [/SLEEP PERFORMANCE/, 'sleepScore', 'Whoop sleep performance'],
-    [/DAY STRAIN/, 'strain', 'Whoop strain'],
     [/HOURS OF SLEEP|TIME ASLEEP/, 'sleepHours', 'Whoop hours of sleep']
   ];
   for (const [re, key, note] of rows) {
     const l = L.find((x) => re.test(x.text));
-    if (!l) continue;
+    if (!l || rec.values[key] != null) continue;
     // The value is at the right end of the label's row: read that part again, enlarged.
     const lastLabelWord = [...l.words].reverse().find((w) => /^[A-Z]{3,}$/.test(w.text)) || l.words[l.words.length - 1];
     const h = l.y1 - l.y0;
@@ -281,19 +283,33 @@ function parseGarminDay(shot, rec) {
   const night = shot.lines.find((l) => /(last night|overnight).{0,12}(avg|hrv)/i.test(l.text) && /\d+\s*ms/i.test(l.text));
   if (night) put(rec, 'hrvMs', toNum(night.text.match(/(\d+)\s*ms/i)[1]), 'Garmin', 'Garmin HRV (last night)');
   // Body Battery: the number in its ring, below the label.
-  const bb = findWord(shot, /^Battery$/i);
+  // Measured from "Body" (the start of the card's label), so the Sleep Score card beside it isn't taken for it.
+  const bbw = findWord(shot, /^Battery$/i);
+  const bb = bbw ? ([...bbw.line.words].reverse().find((x) => x.x1 <= bbw.x0 && /^Body$/i.test(x.text)) || bbw) : null;
   if (bb) { const n = nearNumber(shot, bb, 'below', W * 0.3, (w) => !/%/.test(w.text)); if (n && toNum(n.w.text) <= 100) put(rec, 'bodyBattery', toNum(n.w.text), 'Garmin', 'Garmin Body Battery'); }
   // Sleep score (unless Garmin says no sleep was detected).
   const sl = shot.lines.find((l) => /sleep score/i.test(l.text));
   if (sl && !/no sleep/i.test(shot.text)) {
     const same = sl.text.match(/sleep score\D{0,4}(\d{1,3})\b/i);
-    const w = sl.words.find((x) => /^score$/i.test(x.text)) || sl.words[0];
+    // From "Sleep" in "Sleep Score" (the card's left edge).
+    const si = sl.words.findIndex((x, i) => /^sleep$/i.test(x.text) && sl.words[i + 1] && /^score$/i.test(sl.words[i + 1].text));
+    const w = sl.words[si >= 0 ? si : 0];
     const n = same ? null : nearNumber(shot, w, 'below', W * 0.3);
     const v = same ? +same[1] : n ? toNum(n.w.text) : null;
     if (v != null && v <= 100) put(rec, 'sleepScore', v, 'Garmin', 'Garmin sleep score');
   }
+  // Hours of sleep: "6h 13m" just above "Duration" (Garmin's sleep page and Sleep Score card).
+  const du = /sleep/i.test(shot.text) ? findWord(shot, /^Duration$/i) : null;
+  if (du) for (const l of shot.lines) {
+    if (l.y1 > du.y0 + 2 || du.y0 - l.y1 > W * 0.12) continue;
+    const i = l.words.findIndex((x) => /^\d{1,2}h$/i.test(x.text) && Math.abs(x.x0 - du.x0) < W * 0.12);
+    if (i < 0) continue;
+    const m = l.words[i + 1] && /^\d{1,2}m$/i.test(l.words[i + 1].text) ? parseInt(l.words[i + 1].text, 10) : 0;
+    put(rec, 'sleepHours', parseInt(l.words[i].text, 10) + m / 60, 'Garmin', 'Garmin sleep duration');
+    break;
+  }
   const dur = shot.lines.find((l) => /(sleep duration|total sleep|time asleep)/i.test(l.text) && /\d+\s*h/i.test(l.text));
-  if (dur) { const m = dur.text.match(/(\d{1,2})\s*h\s*(\d{1,2})?/i); put(rec, 'sleepHours', +m[1] + (+m[2] || 0) / 60, 'Garmin', 'Garmin sleep'); }
+  if (dur && rec.values.sleepHours == null) { const m = dur.text.match(/(\d{1,2})\s*h\s*(\d{1,2})?/i); put(rec, 'sleepHours', +m[1] + (+m[2] || 0) / 60, 'Garmin', 'Garmin sleep'); }
 }
 // A number that makes sense for a recovery field.
 function fits(key, v) {
@@ -302,8 +318,10 @@ function fits(key, v) {
 }
 // Keeps a number read for a field. A `weak` one (e.g. Garmin's 7-day average HRV) doesn't replace one already read
 // from another screenshot (e.g. Whoop's last night HRV).
-// The worse of two numbers for a field: lower recovery, HRV, sleep and Body Battery; higher resting heart rate and strain.
-const HIGHER_IS_WORSE = ['restingHr', 'strain'];
+// The worse of two numbers for a field: lower recovery, HRV, sleep and Body Battery; higher resting heart rate.
+const HIGHER_IS_WORSE = ['restingHr'];
+// A number as shown in a note: hours of sleep as 6h 13m.
+const showV = (key, v) => (key === 'sleepHours' ? fmtSleep(v) : v);
 const worse = (key, a, b) => (HIGHER_IS_WORSE.includes(key) ? Math.max(a, b) : Math.min(a, b));
 // When Whoop and Garmin give different numbers for the same thing, the worse one is used and both are shown.
 // Garmin's 7-day average HRV (`weak`) isn't last night's, so it's only used when no last-night HRV was read.
@@ -313,7 +331,7 @@ function put(rec, key, v, source, note, weak) {
   if (!weak && rec.values[key] != null && !rec.weak[key]) {
     if (rec.values[key] === v || rec.source[key] === source) return;
     const w = worse(key, rec.values[key], v);
-    rec.notes[key] = `${rec.source[key]} ${rec.values[key]} · ${source} ${v} — the worse is used`;
+    rec.notes[key] = `${rec.source[key]} ${showV(key, rec.values[key])} · ${source} ${showV(key, v)} — the worse is used`;
     if (w === v) rec.source[key] = source;
     rec.values[key] = w;
     return;
@@ -404,7 +422,7 @@ async function review(shots) {
       // Garmin's 7-day average HRV doesn't replace a last-night HRV already saved from Whoop.
       if (rec.weak[key]) { delete rec.values[key]; delete rec.source[key]; delete rec.notes[key]; continue; }
       const w = worse(key, was, rec.values[key]);
-      rec.notes[key] = `${from} ${was} · ${rec.source[key]} ${rec.values[key]} — the worse is used`;
+      rec.notes[key] = `${from} ${showV(key, was)} · ${rec.source[key]} ${showV(key, rec.values[key])} — the worse is used`;
       if (w === was) rec.source[key] = from;
       rec.values[key] = w;
     }
@@ -422,7 +440,7 @@ async function review(shots) {
   if (!steps.length) {
     openSheet('Nothing found', `<div class="form">
       <p style="margin:0">Nothing could be read from ${shots.length > 1 ? 'these screenshots' : 'this screenshot'}.</p>
-      <p class="muted small" style="margin:0">Screens that work: Garmin Connect <strong>All Activities</strong> (for the calendar), <strong>Personal Records</strong> (running), Garmin <strong>At a Glance</strong>, and Whoop <strong>recovery</strong>, <strong>sleep</strong> and <strong>strain</strong>.</p>
+      <p class="muted small" style="margin:0">Screens that work: Garmin Connect <strong>All Activities</strong> (for the calendar), <strong>Personal Records</strong> (running), Garmin <strong>At a Glance</strong>, and Whoop <strong>recovery</strong> and <strong>Last Night's Sleep</strong>.</p>
       ${shots.length ? thumbs(shots) : ''}
       <button type="button" class="btn secondary" data-close>Close</button></div>`);
     return;
