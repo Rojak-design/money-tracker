@@ -180,3 +180,23 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--primary); o
   position: fixed; left: 50%; transform: translateX(-50%); z-index: 30; bottom: calc(var(--tabbar-h) + var(--safe-b) + 90px);
   background: #222; color: #fff; padding: 10px 16px; border-radius: 20px; font-size: 14px; max-width: calc(100% - 32px); text-align: center;
 }
+
+/* Workout types */
+.view-head { display: flex; justify-content: flex-end; margin: -4px 0 4px; }
+.link-btn { border: 0; background: none; color: var(--primary); font: inherit; font-size: 15px; font-weight: 600; padding: 6px 0; cursor: pointer; }
+.types button:disabled { opacity: .4; cursor: default; }
+.type-row { display: flex; gap: 6px; align-items: center; }
+.type-row .item { flex: 1; min-width: 0; background: var(--bg); }
+.item .chev { color: var(--muted); font-size: 20px; flex: none; }
+.item.faded .ico, .item.faded .title { opacity: .55; }
+.order { display: flex; flex-direction: column; }
+.order .x-btn { height: 30px; }
+.order .x-btn:disabled { opacity: .25; cursor: default; }
+.tag { display: inline-block; font-size: 11px; font-weight: 600; color: var(--muted); background: var(--line); border-radius: 6px; padding: 1px 6px; margin-left: 4px; vertical-align: 2px; }
+.grid-icon { display: grid; grid-template-columns: 72px 1fr; gap: 10px; }
+.icons { display: flex; flex-wrap: wrap; gap: 4px; margin-top: -6px; }
+.icons button { border: 0; background: var(--bg); border-radius: 8px; width: 38px; height: 38px; font-size: 20px; cursor: pointer; padding: 0; }
+.move-row { display: grid; grid-template-columns: 1fr 36px; gap: 6px; align-items: center; }
+.move-row input { padding: 10px; }
+label.check { flex-direction: row; align-items: center; gap: 10px; font-weight: 400; }
+label.check input { width: 22px; height: 22px; flex: none; accent-color: var(--primary); }

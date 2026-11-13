@@ -76,7 +76,6 @@ const niceWhen = (iso) => {
   return `${ago} (${new Date(iso).toLocaleDateString()})`;
 };
 /* ----- Fitness summary ----- */
-const FITNESS_ICONS = { Run: '🏃', Cycle: '🚴', Swim: '🏊', Walk: '🚶', Hike: '🥾', Strength: '🏋️', HIIT: '🔥', Yoga: '🧘', Sport: '⚽' };
 function dayLabel(iso) {
   const t = today(), y = new Date(); y.setDate(y.getDate() - 1);
   if (iso === t) return 'Today';
@@ -92,17 +91,19 @@ function renderFitness(f) {
     el.innerHTML = `<div class="muted small" style="grid-column:1/-1">Nothing logged yet. Tap to log a workout, your weight or recovery.</div>`;
     return;
   }
+  // The workout's type (its icon, and whether distances are in metres), as set up in Fitness.
+  const t = w ? ((f.workoutTypes || []).find((x) => x.id === w.typeId) || {}) : {};
   let wSub = '';
   if (w) {
     const c = w.cardio || {};
     const bits = [dayLabel(w.date)];
-    if (c.distanceKm) bits.push(w.type === 'Swim' ? `${Math.round(c.distanceKm * 1000)} m` : `${+c.distanceKm.toFixed(2)} km`);
+    if (c.distanceKm) bits.push(t.pace === '100m' ? `${Math.round(c.distanceKm * 1000)} m` : `${+c.distanceKm.toFixed(2)} km`);
     else if (w.movements && w.movements.length) bits.push(`${w.movements.length} movement${w.movements.length > 1 ? 's' : ''}`);
     else if (w.durationMin) bits.push(`${w.durationMin} min`);
     wSub = bits.join(' · ');
   }
   el.innerHTML = `
-    <div class="stat"><div class="label">Last workout</div><div class="value">${w ? `${FITNESS_ICONS[w.type] || '💪'} ${esc(w.type)}` : '–'}</div>
+    <div class="stat"><div class="label">Last workout</div><div class="value">${w ? `${esc(t.icon || '💪')} ${esc(w.type)}` : '–'}</div>
       <div class="sub">${w ? esc(wSub) : 'None yet'}</div></div>
     <div class="stat"><div class="label">Recovery</div><div class="value">${r ? `${Math.round(r.recoveryScore)}<small>%</small>` : '–'}</div>
       <div class="sub">${r ? esc(dayLabel(r.date)) : 'None yet'}</div></div>`;
