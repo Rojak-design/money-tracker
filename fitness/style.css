@@ -245,5 +245,7 @@ label.imported input { border-color: var(--primary); }
 .move.linked .link-row { color: var(--primary); font-weight: 600; }
 
 /* Sets counted in calories or metres: no weight column */
-.set-head select.munit { padding: 2px 18px 2px 4px; font-size: 12px; font-weight: 600; color: var(--muted); background-color: transparent; border: 1px dashed var(--line); border-radius: 6px; text-align: center; background-position: calc(100% - 9px) 50%, calc(100% - 5px) 50%; width: auto; }
+.unit-row { display: flex; align-items: center; gap: 6px; margin: 6px 0 2px; flex-wrap: wrap; }
+.unit-chip { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.unit-chip.on { background: var(--primary); border-color: var(--primary); color: var(--on-primary); font-weight: 600; }
 .move.no-kg .kg, .move.no-kg .kg-h { visibility: hidden; }

@@ -334,7 +334,9 @@ function writtenMoves(lines) {
     // Leave out part labels and bullets: "A1.", "B)", "1.", "-", "•". Men's/women's numbers ("12/10 calories",
     // "100/70 kg"): the second one is used, as for weights.
     const raw = raw0.replace(/^(?:[A-Z][0-9]?[.)]|\d{1,2}[.)](?!\d)|[-•*–])\s*/, '').trim()
-      .replace(/\b\d+\s*\/\s*(\d+)(?=\s*(?:cal|cals|calories|kcal)\b)/i, '$1').replace(/\bcalories\b/i, 'cal');
+      .replace(/\b\d+\s*\/\s*(\d+)(?=\s*(?:cal|cals|calories|kcal|m|meters?|metres?|k|km)\b)/i, '$1').replace(/\bcalories\b/i, 'cal')
+      // "1000 meters", "2k" -> "1000m", "2km"
+      .replace(/(\d)\s*(?:meters?|metres?)\b/gi, '$1m').replace(/(\d)k\b/gi, '$1km');
     // "SkiErg 12/10 calories", "Row 15 cal"
     m = raw.match(/^([A-Za-z][A-Za-z' -]+?)\s+(\d{1,4})\s*(?:cal|cals|kcal)\b/i);
     if (m && moveName(m[1])) { push({ read: `${moveName(m[1])} (cal)`, reps: +m[2], sets: scheme ? 1 : sets, scheme: Array.isArray(scheme) ? scheme : null }); continue; }
@@ -364,7 +366,7 @@ function writtenMoves(lines) {
     m = raw.match(/^(.+?)\s*[x×]\s*(\d{1,3})\b(.*)$/i);
     if (m && moveName(m[1])) { push({ read: moveName(m[1]), reps: +m[2], sets, kg: kgOf(m[3]) }); continue; }
     // "Run 400m", "Row 1000 m"
-    m = raw.match(/^(.+?)\s+(\d{2,5})\s*(m|km)\b/i);
+    m = raw.match(/^(.+?)\s+(\d{1,5}(?:[.,]\d+)?)\s*(m|km)\b/i);
     if (m && moveName(m[1])) { push({ read: `${moveName(m[1])} ${m[2]} ${m[3].toLowerCase()}`, sets }); continue; }
     // A bullet with just a movement ("- Burpee over the dumbbell"), or a movement under a rep scheme ("21-15-9" then
     // "Thrusters", "Pull-ups").

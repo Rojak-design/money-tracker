@@ -504,7 +504,9 @@ function workoutSheet(id, copyFrom, imp) {
       <div class="move-head"><input class="mname" list="moveNames" placeholder="Movement, e.g. ${esc((typeOf(type).movements || [])[0] || 'Squat')}" aria-label="Movement" value="${esc(m ? m.name : '')}" autocomplete="off">
         <button type="button" class="x-btn" aria-label="Remove movement">🗑</button></div>
       <label class="rest-row">Rest between sets <input class="rest" inputmode="decimal" data-fmt="rest" placeholder="e.g. 1:30" aria-label="Rest between sets (min:sec, or seconds)" value="${m && m.restSec ? fmtTime(m.restSec) : ''}" autocomplete="off"></label>
-      <div class="set-row set-head"><span>Set</span><span><select class="munit" aria-label="Count sets in">${Object.entries(UNITS).map(([k, v]) => `<option value="${k}" ${((m && m.unit) || 'reps') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></span><span class="kg-h">kg</span><span></span></div>
+      <div class="unit-row"><span class="muted small">Count in</span><input type="hidden" class="munit" value="${(m && m.unit) || 'reps'}">
+        ${Object.entries(UNITS).map(([k, v]) => `<button type="button" class="unit-chip" data-u="${k}">${v}</button>`).join('')}</div>
+      <div class="set-row set-head"><span>Set</span><span class="reps-h">Reps</span><span class="kg-h">kg</span><span></span></div>
       <div class="sets"></div>
       <button type="button" class="mini-btn add-set">+ Add set</button>`;
     const setsEl = $('.sets', el);
@@ -513,10 +515,12 @@ function workoutSheet(id, copyFrom, imp) {
     const unitSel = $('.munit', el);
     const showUnit = () => {
       setsEl.dataset.unit = unitSel.value;
+      $$('.unit-chip', el).forEach((b) => b.classList.toggle('on', b.dataset.u === unitSel.value));
+      $('.reps-h', el).textContent = UNITS[unitSel.value];
       el.classList.toggle('no-kg', unitSel.value !== 'reps');
       $$('.reps', el).forEach((i) => { i.placeholder = { cal: 'cal', m: 'm' }[unitSel.value] || 'reps'; });
     };
-    unitSel.addEventListener('change', () => { unitSel.dataset.chosen = '1'; showUnit(); });
+    $$('.unit-chip', el).forEach((b) => b.addEventListener('click', () => { unitSel.value = b.dataset.u; unitSel.dataset.chosen = '1'; showUnit(); }));
     showUnit();
     // Linked to the movement above: done round by round (set 1 of each, then set 2 of each…).
     const linkBox = $('.mlink', el);
@@ -527,7 +531,7 @@ function workoutSheet(id, copyFrom, imp) {
     if (m && m.importedName) $('.mname', el).dataset.imported = m.importedName;
     // Picking a movement fills in the rest you used for it last time (if the box is still empty).
     $('.mname', el).addEventListener('change', () => {
-      // A rower, SkiErg or bike counts calories, unless you've chosen otherwise.
+      // A rower, SkiErg or bike starts on calories, unless you've chosen otherwise (tap Metres for a distance).
       if (!unitSel.dataset.chosen && !(m && m.unit) && CAL_MACHINE.test($('.mname', el).value) && unitSel.value === 'reps') { unitSel.value = 'cal'; showUnit(); }
       const restEl = $('.rest', el);
       const last = lastRest($('.mname', el).value);
