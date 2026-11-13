@@ -243,3 +243,13 @@ label.imported input { border-color: var(--primary); }
 #wMoves .move:first-child .link-row { display: none; }
 .move.linked { margin-top: -6px; border-top: 3px solid var(--primary); border-top-left-radius: 0; border-top-right-radius: 0; }
 .move.linked .link-row { color: var(--primary); font-weight: 600; }
+
+/* Sets counted in calories or metres: no weight column */
+.set-head select.munit { padding: 2px 18px 2px 4px; font-size: 12px; font-weight: 600; color: var(--muted); background-color: transparent; border: 1px dashed var(--line); border-radius: 6px; text-align: center; background-position: calc(100% - 9px) 50%, calc(100% - 5px) 50%; width: auto; }
+.move.no-kg .kg, .move.no-kg .kg-h { visibility: hidden; }
+/* Picking lines from a screenshot */
+.pick-lines summary { cursor: pointer; font-weight: 600; color: var(--primary); }
+.pick-lines .lines { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; max-height: 260px; overflow-y: auto; }
+.pick-lines .lines button { text-align: left; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 14px; cursor: pointer; }
+.pick-lines .lines button.added { opacity: .45; }
+.pick-lines .lines button.added::before { content: '✓ '; color: var(--primary); }

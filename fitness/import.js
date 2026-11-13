@@ -296,7 +296,7 @@ const NOT_MOVE = /^(rest|sets?|rounds?|reps?|minutes?|mins?|seconds?|secs?|for t
 const KG = /(\d+(?:[.,]\d+)?)\s*(kgs?|lbs?|#)(?![a-z])/i;
 // A movement name as written: letters (and - ' /), 2–6 words, not an instruction.
 function moveName(raw, maxWords = 6) {
-  const n = raw.replace(/\(.*?\)/g, '').replace(KG, '').replace(/\b\d+(?:[.,]\d+)?\s*\/\s*/g, '').replace(/@.*$/, '').replace(/[:;,.!]+$/, '').replace(/\s+/g, ' ').trim();
+  const n = raw.replace(/\(.*?\)/g, '').replace(/\b\d+\s*[x×]\s*(?=\d)/gi, '').replace(KG, '').replace(/\s+(?:DBs?|KBs?|BB)\s*$/i, '').replace(/\b\d+(?:[.,]\d+)?\s*\/\s*/g, '').replace(/@.*$/, '').replace(/[:;,.!]+$/, '').replace(/\s+/g, ' ').trim();
   if (!/^[A-Za-z][A-Za-z' /-]{1,70}[A-Za-z]$/.test(n) || n.split(' ').length > maxWords || NOT_MOVE.test(n)) return null;
   return n;
 }
@@ -311,8 +311,11 @@ function writtenMoves(lines) {
   // A heading that names the movement ("A. Segmented Clean Pull", "B. Power Clean + Clean"), waiting for the line
   // with its sets and reps ("4 sets of 3 reps", "6 sets of @ 80%"). It may wrap onto the next line.
   let heading = null, headingOpen = false;
-  for (const raw0 of lines) {
+  for (let raw0 of lines) {
     if (!raw0 || WOD_SKIP.test(raw0) || /^[+#]/.test(raw0)) { headingOpen = false; continue; }
+    // Stray letters in front of a movement ("OB 16 OH lunge" — cut-off text from the next column, or a bullet
+    // read as "e" / "eo"): left out.
+    raw0 = raw0.replace(/^(?:[A-Za-z]{1,2}\s+)+(?=\d{1,4}\s+[A-Za-z])/, '');
     let m = raw0.match(/^(\d{1,2})\s+(?:sets|rounds)\s+of\s*(?:(\d{1,3})\s*(?:reps?|x)\b)?/i);
     if (m && heading) {
       // Each part of a complex ("Power Clean + Clean") is a movement, done together in every set.
@@ -403,10 +406,15 @@ function parseWod(shot, acc) {
 }
 function wodToMovements(acc, t) {
   return acc.moves.map((mv) => {
-    const read = sentenceCase(mv.read.replace(/\s+/g, ' '));
+    let read = sentenceCase(mv.read.replace(/\s+/g, ' ')), unit = null, metres = null;
+    const cal = read.match(/^(.*?)\s*\(cal\)$/i);
+    if (cal) { read = cal[1]; unit = 'cal'; }
+    const dist = read.match(/^(.*?)\s+(\d+(?:[.,]\d+)?)\s*(m|km)$/i);
+    if (dist) { read = dist[1]; unit = 'm'; metres = Math.round(toNum(dist[2]) * (dist[3].toLowerCase() === 'km' ? 1000 : 1)); }
     const sets = Array.isArray(mv.scheme) ? mv.scheme.map((r) => ({ reps: r, weightKg: mv.kg || null }))
-      : Array.from({ length: Math.max(1, Math.min(mv.sets || 1, 30)) }, () => ({ reps: mv.reps || null, weightKg: mv.kg || null }));
-    return { importedName: read, name: ownMoveName(read, t), restSec: null, sets, group: mv.group || null };
+      : Array.from({ length: Math.max(1, Math.min(mv.sets || 1, 30)) }, () => ({ reps: metres || mv.reps || null, weightKg: unit ? null : mv.kg || null }));
+    if (!unit && CAL_MACHINE.test(read) && !mv.kg) unit = 'cal';
+    return Object.assign({ importedName: read, name: ownMoveName(read, t), restSec: null, sets, group: mv.group || null }, unit ? { unit } : {});
   });
 }
 
@@ -596,6 +604,26 @@ async function importShots(files) {
 // Puts together what the screenshots show and opens the forms to check it: the workout first, then recovery.
 async function review(shots) {
   const thumbs = (list) => `<div class="shots">${list.map((s, i) => `<img src="${s.url}" alt="Screenshot ${i + 1}" data-shot>`).join('')}</div><div class="shot-view"></div>`;
+  // Every line read, to tap and add as a movement — for anything the reader missed or a layout it doesn't know.
+  const pickList = (list, open) => {
+    const seen = new Set();
+    const lines = list.flatMap((sh) => sh.lines.map((l) => cleanLine(l.text))).filter((x) => /[A-Za-z]{3,}/.test(x) && !seen.has(x) && seen.add(x)).slice(0, 120);
+    return lines.length ? `<details class="pick-lines"${open ? ' open' : ''}><summary>${open ? 'Tap the lines that are movements' : 'Missing something? Pick lines from the screenshot'}</summary>
+      <div class="lines">${lines.map((x) => `<button type="button" data-line="${esc(x)}">${esc(x)}</button>`).join('')}</div></details>` : '';
+  };
+  // Tapping a line adds it as a movement: its reps, sets and kg where they can be read, otherwise just the name.
+  const bindPick = (addMove, typeId) => {
+    $$('[data-line]').forEach((b) => b.addEventListener('click', () => {
+      const line = b.dataset.line;
+      const t = typeOf((($('#wTypes .on') || {}).dataset || {}).t || typeId);
+      const mv = writtenMoves([line])[0];
+      const m = mv ? wodToMovements({ moves: [Object.assign(mv, { group: null })] }, t)[0]
+        : { name: sentenceCase(line.replace(/^[^A-Za-z]+/, '').replace(/[:.!]+$/, '').slice(0, 60)), sets: [{ reps: null, weightKg: null }] };
+      const el = addMove(m);
+      b.classList.add('added');
+      if (el) el.scrollIntoView({ block: 'nearest' });
+    }));
+  };
   const workoutShots = shots.filter((s) => /^garmin(Laps|Strength|Activity)$|^wod$/.test(s.kind));
   const dayShots = shots.filter((s) => s.kind === 'whoop' || s.kind === 'garminDay');
   const steps = [];
@@ -652,10 +680,11 @@ async function review(shots) {
       banner: `<div class="import-banner"><div>📷 <strong>Read from ${workoutShots.length} screenshot${workoutShots.length > 1 ? 's' : ''}</strong> (${esc(sources)}). Check the numbers against your screenshots — tap one to see it bigger. Nothing is saved until you tap Save.</div>
         ${tips.map((x) => `<div>• ${esc(x)}</div>`).join('')}
         ${laps ? `<button type="button" class="mini-btn" id="lapsBtn">Add the ${laps.length} laps as intervals</button>` : ''}
-        ${thumbs(workoutShots)}</div>`,
-      bind: ({ addRep }) => {
+        ${thumbs(workoutShots)}${t.kind === 'strength' ? pickList(workoutShots, false) : ''}</div>`,
+      bind: ({ addRep, addMove }) => {
         const b = $('#lapsBtn');
         if (b) b.addEventListener('click', () => { for (const r of laps) addRep(r); b.remove(); });
+        bindPick(addMove, t.id);
       },
       onDone: () => { show('workouts'); next(); }
     }));
@@ -692,6 +721,18 @@ async function review(shots) {
     }
   }
 
+  // Nothing recognised but there's text: make the workout from it by picking its lines.
+  const textShots = shots.filter((sh) => sh.kind !== 'whoop' && sh.kind !== 'garminDay').filter((sh) => sh.lines.filter((l) => /[A-Za-z]{3,}/.test(l.text)).length >= 3);
+  if (!steps.length && textShots.length) {
+    const t = findType(/\b(AMRAP|EMOM|for time|rounds|WOD|crossfit)\b/i.test(textShots.map((x) => x.text).join(' ')) ? 'crossfit' : 'strength');
+    steps.push(() => workoutSheet(null, { typeId: t.id, type: t.name, kind: t.kind, date: null, notes: textShots.flatMap((x) => x.lines.map((l) => cleanLine(l.text))).filter((x) => /[A-Za-z]{3,}/.test(x)).join('\n').slice(0, 2000), movements: [] }, {
+      source: 'written workout',
+      banner: `<div class="import-banner"><div>📷 <strong>This layout wasn't recognised</strong>, but its text was read. Tap the lines that are movements to add them (reps and kg are filled in where they can be read), then check and save. The text is in the notes.</div>
+        ${thumbs(textShots)}${pickList(textShots, true)}</div>`,
+      bind: ({ addMove }) => bindPick(addMove, t.id),
+      onDone: () => { show('workouts'); next(); }
+    }));
+  }
   if (!steps.length) {
     openSheet('Nothing found', `<div class="form">
       <p style="margin:0">No workout or recovery numbers could be found in ${shots.length > 1 ? 'these screenshots' : 'this screenshot'}.</p>

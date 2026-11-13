@@ -8,7 +8,8 @@
      workouts:          { id, date, typeId, type (the type's name), kind, durationMin, avgHr, calories, notes, source,
                           cardio?:    { distanceKm, timeSec, paceSecPerKm,
                                         intervals?: [ { distanceKm, timeSec, paceSecPerKm, restSec } ] (one per rep) },
-                          movements?: [ { name, restSec, group, sets: [ { reps, weightKg } ] } ] }
+                          movements?: [ { name, unit, restSec, group, sets: [ { reps, weightKg } ] } ] }
+                          unit: what `reps` counts — 'reps' (or missing), 'cal' (calories, e.g. rowing) or 'm' (metres)
                           group: movements with the same group are done round by round (set 1 of each, then set 2
                           of each…), e.g. 21-15-9 thrusters and pull-ups; null when done one after the other
                           restSec: rest between sets of that movement, in seconds (null if not given)
@@ -238,6 +239,9 @@ function groupedList(entries, itemHtml) {
 /* ---------- Workouts ---------- */
 const setCount = (w) => (w.movements || []).reduce((n, m) => n + m.sets.length, 0);
 const topWeight = (w) => Math.max(0, ...(w.movements || []).flatMap((m) => m.sets.map((s) => s.weightKg || 0)));
+// What a movement's sets count: reps, calories (rower, SkiErg, bike) or metres.
+const UNITS = { reps: 'Reps', cal: 'Cal', m: 'Metres' };
+const CAL_MACHINE = /\b(row|rower|rowing|ski|skierg|ski ?erg|bike|assault|echo|air ?bike|bike ?erg|airdyne|c2)\b/i;
 function workoutSummary(w) {
   const parts = [];
   const how = typeOfW(w).pace;
@@ -484,7 +488,7 @@ function workoutSheet(id, copyFrom, imp) {
     const row = document.createElement('div');
     row.className = 'set-row';
     row.innerHTML = `<span class="n"></span>
-      <input class="reps" inputmode="numeric" placeholder="reps" aria-label="Reps" value="${s && s.reps != null ? s.reps : ''}">
+      <input class="reps" inputmode="numeric" placeholder="${{ cal: 'cal', m: 'm' }[setsEl.dataset.unit] || 'reps'}" aria-label="Reps, calories or metres" value="${s && s.reps != null ? s.reps : ''}">
       <input class="kg" inputmode="decimal" placeholder="kg" aria-label="Weight in kg" value="${s && s.weightKg != null ? s.weightKg : ''}">
       <button type="button" class="x-btn" aria-label="Remove set">✕</button>`;
     $('.x-btn', row).addEventListener('click', () => { row.remove(); numberSets(setsEl); });
@@ -500,11 +504,20 @@ function workoutSheet(id, copyFrom, imp) {
       <div class="move-head"><input class="mname" list="moveNames" placeholder="Movement, e.g. ${esc((typeOf(type).movements || [])[0] || 'Squat')}" aria-label="Movement" value="${esc(m ? m.name : '')}" autocomplete="off">
         <button type="button" class="x-btn" aria-label="Remove movement">🗑</button></div>
       <label class="rest-row">Rest between sets <input class="rest" inputmode="decimal" data-fmt="rest" placeholder="e.g. 1:30" aria-label="Rest between sets (min:sec, or seconds)" value="${m && m.restSec ? fmtTime(m.restSec) : ''}" autocomplete="off"></label>
-      <div class="set-row set-head"><span>Set</span><span>Reps</span><span>kg</span><span></span></div>
+      <div class="set-row set-head"><span>Set</span><span><select class="munit" aria-label="Count sets in">${Object.entries(UNITS).map(([k, v]) => `<option value="${k}" ${((m && m.unit) || 'reps') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></span><span class="kg-h">kg</span><span></span></div>
       <div class="sets"></div>
       <button type="button" class="mini-btn add-set">+ Add set</button>`;
     const setsEl = $('.sets', el);
     $('.move-head .x-btn', el).addEventListener('click', () => el.remove());
+    // Reps, calories or metres: calories and metres have no weight.
+    const unitSel = $('.munit', el);
+    const showUnit = () => {
+      setsEl.dataset.unit = unitSel.value;
+      el.classList.toggle('no-kg', unitSel.value !== 'reps');
+      $$('.reps', el).forEach((i) => { i.placeholder = { cal: 'cal', m: 'm' }[unitSel.value] || 'reps'; });
+    };
+    unitSel.addEventListener('change', () => { unitSel.dataset.chosen = '1'; showUnit(); });
+    showUnit();
     // Linked to the movement above: done round by round (set 1 of each, then set 2 of each…).
     const linkBox = $('.mlink', el);
     const showLink = () => el.classList.toggle('linked', linkBox.checked);
@@ -514,6 +527,8 @@ function workoutSheet(id, copyFrom, imp) {
     if (m && m.importedName) $('.mname', el).dataset.imported = m.importedName;
     // Picking a movement fills in the rest you used for it last time (if the box is still empty).
     $('.mname', el).addEventListener('change', () => {
+      // A rower, SkiErg or bike counts calories, unless you've chosen otherwise.
+      if (!unitSel.dataset.chosen && !(m && m.unit) && CAL_MACHINE.test($('.mname', el).value) && unitSel.value === 'reps') { unitSel.value = 'cal'; showUnit(); }
       const restEl = $('.rest', el);
       const last = lastRest($('.mname', el).value);
       if (!restEl.value && last) restEl.value = fmtTime(last);
@@ -531,7 +546,7 @@ function workoutSheet(id, copyFrom, imp) {
   $('#wAddMove').addEventListener('click', () => $('.mname', addMove()).focus());
   ((src && src.movements) || []).forEach((m, i, all) => addMove(Object.assign({}, m, { linkPrev: !!(i && m.group && m.group === all[i - 1].group) })));
   setType(type);
-  if (imp && imp.bind) imp.bind({ addRep });
+  if (imp && imp.bind) imp.bind({ addRep, addMove });
 
   $('#wForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -588,11 +603,12 @@ function workoutSheet(id, copyFrom, imp) {
         const name = $('.mname', el).value.trim().replace(/\s+/g, ' ');
         const restSec = parseRest($('.rest', el).value);
         if (Number.isNaN(restSec) || (restSec != null && restSec > 3600)) return toast(`Type the rest for ${name || 'each movement'} as min:sec (e.g. 1:30) or seconds (e.g. 90)`);
-        const sets = [];
+        const sets = [], unit = $('.munit', el).value;
+        const word = { cal: 'calories', m: 'metres' }[unit] || 'reps';
         for (const r of $$('.sets .set-row', el)) {
-          const reps = num($('.reps', r).value), kg = num($('.kg', r).value);
+          const reps = num($('.reps', r).value), kg = unit === 'reps' ? num($('.kg', r).value) : null;
           if (reps == null && kg == null) continue;
-          if (reps == null || isNaN(reps) || reps <= 0 || reps > 1000 || reps % 1) return toast(`Check the reps for ${name || 'each set'}`);
+          if (reps == null || isNaN(reps) || reps <= 0 || reps > (unit === 'm' ? 100000 : 1000) || reps % 1) return toast(`Check the ${word} for ${name || 'each set'}`);
           if (isNaN(kg) || (kg != null && (kg < 0 || kg > 1000))) return toast(`Check the weight for ${name || 'each set'}`);
           sets.push({ reps, weightKg: kg == null ? null : round(kg, 2) });
         }
@@ -606,7 +622,7 @@ function workoutSheet(id, copyFrom, imp) {
         }
         // Ticked "round by round with the movement above": same group as it; otherwise a group of its own.
         group = movements.length && $('.mlink', el).checked ? group : 'g' + ++groups;
-        movements.push({ name: matchName(name, t), restSec, group, sets });
+        movements.push(Object.assign({ name: matchName(name, t), restSec, group, sets }, unit !== 'reps' ? { unit } : {}));
       }
       // A group with one movement is just that movement.
       for (const mv of movements) if (movements.filter((x) => x.group === mv.group).length < 2) mv.group = null;
