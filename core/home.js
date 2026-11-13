@@ -85,26 +85,24 @@ function dayLabel(iso) {
 const newest = (list) => [...(list || [])].sort((a, b) => (b.date + (b.savedAt || '')).localeCompare(a.date + (a.savedAt || '')))[0];
 function renderFitness(f) {
   const el = $('#fitnessSummary');
-  const w = newest(f && f.workouts);
+  const acts = (f && f.activities) || [];
   const r = newest(((f && f.recoveryDays) || []).filter((x) => x.recoveryScore != null));
-  if (!w && !r) {
-    el.innerHTML = `<div class="muted small" style="grid-column:1/-1">Nothing logged yet. Tap to log a workout, your weight or recovery.</div>`;
+  if (!acts.length && !r) {
+    el.innerHTML = `<div class="muted small" style="grid-column:1/-1">Nothing yet. Tap to import your Garmin activities, or add your weight or recovery.</div>`;
     return;
   }
-  // The workout's type (its icon, and whether distances are in metres), as set up in Fitness.
-  const t = w ? ((f.workoutTypes || []).find((x) => x.id === w.typeId) || {}) : {};
-  let wSub = '';
-  if (w) {
-    const c = w.cardio || {};
-    const bits = [dayLabel(w.date)];
-    if (c.distanceKm) bits.push(t.pace === '100m' ? `${Math.round(c.distanceKm * 1000)} m` : `${+c.distanceKm.toFixed(2)} km`);
-    else if (w.movements && w.movements.length) bits.push(`${w.movements.length} movement${w.movements.length > 1 ? 's' : ''}`);
-    else if (w.durationMin) bits.push(`${w.durationMin} min`);
-    wSub = bits.join(' · ');
-  }
+  // This week (Monday to Sunday): sessions by category, with the category icons set up in Fitness.
+  const d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  const p = (n) => String(n).padStart(2, '0');
+  const mon = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const week = acts.filter((a) => a.date >= mon);
+  const cats = (f && f.categories) || [];
+  const n = {};
+  for (const a of week) n[a.catId] = (n[a.catId] || 0) + 1;
+  const icons = Object.keys(n).map((id) => `${esc((cats.find((c) => c.id === id) || {}).icon || '💪')}${n[id] > 1 ? `×${n[id]}` : ''}`).join(' ');
   el.innerHTML = `
-    <div class="stat"><div class="label">Last workout</div><div class="value">${w ? `${esc(t.icon || '💪')} ${esc(w.type)}` : '–'}</div>
-      <div class="sub">${w ? esc(wSub) : 'None yet'}</div></div>
+    <div class="stat"><div class="label">This week</div><div class="value">${week.length}<small> session${week.length === 1 ? '' : 's'}</small></div>
+      <div class="sub">${icons || 'None yet'}</div></div>
     <div class="stat"><div class="label">Recovery</div><div class="value">${r ? `${Math.round(r.recoveryScore)}<small>%</small>` : '–'}</div>
       <div class="sub">${r ? esc(dayLabel(r.date)) : 'None yet'}</div></div>`;
 }

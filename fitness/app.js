@@ -1,89 +1,78 @@
-/* Fitness — workouts, body measurements and recovery, stored on this device in the shared Rojak store.
+/* Fitness — a calendar of what you did each day, body measurements and recovery, stored on this device in the
+   shared Rojak store.
 
    Saved under 'mod:fitness' (see ../core/store.js). Every entry has its own `date` (YYYY-MM-DD) for the day it
    belongs to, and the store adds `savedAt` / `updatedAt`, so other modules (e.g. a habit tracker) can read it:
-     workoutTypes:      { id, name, icon, kind, pace, movements: [names], hidden }  your workout types, in the
-                          order shown; kind is what's logged: 'cardio' (distance & pace), 'strength' (movements &
-                          sets) or 'other' (time & notes)
-     workouts:          { id, date, typeId, type (the type's name), kind, durationMin, avgHr, calories, notes, source,
-                          cardio?:    { distanceKm, timeSec, paceSecPerKm,
-                                        intervals?: [ { distanceKm, timeSec, paceSecPerKm, restSec } ] (one per rep) },
-                          movements?: [ { name, unit, restSec, group, sets: [ { reps, weightKg } ] } ] }
-                          unit: what `reps` counts — 'reps' (or missing), 'cal' (calories, e.g. rowing) or 'm' (metres)
-                          group: movements with the same group are done round by round (set 1 of each, then set 2
-                          of each…), e.g. 21-15-9 thrusters and pull-ups; null when done one after the other
-                          restSec: rest between sets of that movement, in seconds (null if not given)
+     categories:        { id, name, icon, color, words: [words in an activity's name that mean this category] }
+                          the kinds of session shown on the calendar, in the order shown
+     activities:        { id, date, time ('19:19' or null), name (as in Garmin), catId, source }   the calendar
+     nameCats:          { 'activity name (lower case)': catId }   categories you picked for a name, used next time
      bodyMeasurements:  { id, date, weightKg, heightCm, bodyFatPct }          one per day
      recoveryDays:      { id, date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, strain, bodyBattery, source,
                           sources: { field: 'Whoop' | 'Garmin' } for numbers read from a screenshot }  one per day
-     importAliases:     { 'name as read from a screenshot (lower case)': 'your movement name' }
+   Kept from earlier versions (not shown, not changed): workoutTypes, workouts, importAliases.
    Numbers left empty are saved as null. */
 'use strict';
 
-/* ---------- Workout types (you can add, rename, reorder and hide them) ---------- */
-// pace: how pace is shown and typed — 'km' (min:sec per km), 'speed' (km/h) or '100m' (min:sec per 100 m, metres).
-const DEFAULT_TYPES = [
-  { id: 'run', name: 'Run', icon: '🏃', kind: 'cardio', pace: 'km' },
-  { id: 'cycle', name: 'Cycle', icon: '🚴', kind: 'cardio', pace: 'speed' },
-  { id: 'swim', name: 'Swim', icon: '🏊', kind: 'cardio', pace: '100m' },
-  { id: 'walk', name: 'Walk', icon: '🚶', kind: 'cardio', pace: 'km' },
-  { id: 'hike', name: 'Hike', icon: '🥾', kind: 'cardio', pace: 'km' },
-  { id: 'strength', name: 'Strength', icon: '🏋️', kind: 'strength',
-    movements: ['Squat', 'Bench press', 'Deadlift', 'Overhead press', 'Barbell row', 'Pull-up', 'Lunge', 'Hip thrust', 'Leg press', 'Lat pulldown'] },
-  { id: 'weightlifting', name: 'Weightlifting', icon: '🏋️‍♀️', kind: 'strength',
-    movements: ['Snatch', 'Clean and jerk', 'Clean', 'Jerk', 'Power snatch', 'Power clean', 'Front squat', 'Back squat', 'Snatch pull', 'Clean pull'] },
-  { id: 'crossfit', name: 'CrossFit', icon: '⚡', kind: 'strength',
-    movements: ['Thruster', 'Wall ball', 'Burpee', 'Box jump', 'Kettlebell swing', 'Pull-up', 'Toes-to-bar', 'Double-under', 'Push press', 'Deadlift'] },
-  { id: 'functional', name: 'Functional', icon: '🔥', kind: 'strength',
-    movements: ['Burpee', 'Kettlebell swing', 'Goblet squat', 'Box jump', 'Medicine ball slam', 'Battle ropes', 'Sled push', "Farmer's carry", 'Mountain climber'] },
-  { id: 'yoga', name: 'Yoga', icon: '🧘', kind: 'other' },
-  { id: 'sport', name: 'Sport', icon: '⚽', kind: 'other' },
-  { id: 'other', name: 'Other', icon: '💪', kind: 'other' }
+/* ---------- Categories (you can add, rename, recolour and delete them) ---------- */
+const DEFAULT_CATS = [
+  { id: 'strength', name: 'Strength', icon: '🏋️', color: '#ea580c', words: ['strength', 'weightlifting', 'lifting', 'weights', 'powerlifting'] },
+  { id: 'crossfit', name: 'CrossFit', icon: '⚡', color: '#dc2626', words: ['crossfit', 'wod', 'metcon', 'amrap', 'emom', 'hiit'] },
+  { id: 'gymnastics', name: 'Gymnastics', icon: '🤸', color: '#9333ea', words: ['gymnastics', 'handstand', 'muscle-up'] },
+  { id: 'easy', name: 'Easy run', icon: '🏃', color: '#16a34a', words: ['easy', 'recovery run', 'run', 'running', 'jog'] },
+  { id: 'tempo', name: 'Tempo run', icon: '🔥', color: '#d97706', words: ['tempo', 'threshold', 'progression'] },
+  { id: 'intervals', name: 'Intervals', icon: '⏱️', color: '#2563eb', words: ['interval', 'repeats', 'track', 'fartlek', 'speed'] },
+  { id: 'long', name: 'Long run', icon: '🛣️', color: '#0d9488', words: ['long run', 'long'] },
+  { id: 'race', name: 'Race', icon: '🏅', color: '#ca8a04', words: ['race', 'parkrun', 'marathon'] },
+  { id: 'cycling', name: 'Cycling', icon: '🚴', color: '#0891b2', words: ['cycling', 'bike', 'ride', 'spin'] },
+  { id: 'swim', name: 'Swimming', icon: '🏊', color: '#0284c7', words: ['swim', 'pool'] },
+  { id: 'other', name: 'Other', icon: '💪', color: '#64748b', words: [] }
 ];
-const KINDS = { cardio: 'Distance & pace', strength: 'Movements & sets', other: 'Time & notes' };
-const PACES = { km: 'Pace in min:sec per km', speed: 'Speed in km/h', '100m': 'Pace per 100 m (distance in metres)' };
-const ICONS = ['🏃', '🚴', '🏊', '🚶', '🥾', '🏋️', '🏋️‍♀️', '⚡', '🔥', '🤸', '🧘', '⚽', '🏸', '🎾', '🏀', '🥊', '🥋', '🧗', '🚣', '⛷️', '🏄', '💃', '🏓', '💪'];
+const ICONS = ['🏋️', '⚡', '🤸', '🏃', '🔥', '⏱️', '🛣️', '🏅', '🚴', '🏊', '🚶', '🥾', '🧘', '⚽', '🎾', '🥊', '🧗', '🚣', '⛷️', '💃', '❤️', '💪'];
+const COLORS = ['#ea580c', '#dc2626', '#db2777', '#9333ea', '#2563eb', '#0284c7', '#0891b2', '#0d9488', '#16a34a', '#65a30d', '#ca8a04', '#d97706', '#64748b'];
 const sameName = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
-const typeOf = (id) => state.workoutTypes.find((t) => t.id === id) || { id: '', name: 'Other', icon: '💪', kind: 'other', pace: 'km', movements: [] };
-// A workout's type (by id; by name for anything saved before types had ids).
-const typeOfW = (w) => state.workoutTypes.find((t) => t.id === w.typeId) || state.workoutTypes.find((t) => sameName(t.name, w.type)) ||
-  { id: '', name: w.type || 'Other', icon: '💪', kind: w.kind || 'other', pace: 'km', movements: [] };
+const OTHER = { id: 'other', name: 'Other', icon: '💪', color: '#64748b', words: [] };
+const catOf = (id) => state.categories.find((c) => c.id === id) || state.categories.find((c) => c.id === 'other') || OTHER;
+const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// The category for an activity's name: the one you picked for that name before, otherwise the category with the
+// longest word found in the name ("Tempo run" → Tempo run, not Easy run; "Gymnastics WOD" → Gymnastics). A name
+// like "6x800" counts as intervals.
+function guessCat(name) {
+  const n = String(name || '').toLowerCase().trim();
+  const picked = (state.nameCats || {})[n];
+  if (picked && state.categories.some((c) => c.id === picked)) return picked;
+  const s = /\b\d+\s*[x×]\s*\d+/.test(n) ? n + ' intervals' : n;
+  let best = null, len = 0;
+  for (const c of state.categories) for (const w0 of c.words || []) {
+    const w = w0.toLowerCase().trim();
+    if (w && w.length > len && new RegExp(`(^|[^a-z])${escRe(w)}`).test(s)) { best = c; len = w.length; }
+  }
+  return (best || catOf('other')).id;
+}
 
 /* ---------- State ---------- */
-const emptyState = () => ({ workoutTypes: [], workouts: [], bodyMeasurements: [], recoveryDays: [], settings: {} });
+const emptyState = () => ({ categories: [], activities: [], nameCats: {}, bodyMeasurements: [], recoveryDays: [], settings: {} });
 let state = emptyState();
 
 async function load() {
   const saved = await Rojak.load('fitness');
   state = Object.assign(emptyState(), saved || {});
-  for (const k of ['workoutTypes', 'workouts', 'bodyMeasurements', 'recoveryDays']) if (!Array.isArray(state[k])) state[k] = [];
+  for (const k of ['categories', 'activities', 'bodyMeasurements', 'recoveryDays']) if (!Array.isArray(state[k])) state[k] = [];
+  if (!state.nameCats || typeof state.nameCats !== 'object') state.nameCats = {};
+  if (!state.settings || typeof state.settings !== 'object') state.settings = {};
   if (migrate() && saved) await save();
 }
 // Fill in anything added in newer versions. Returns true if something changed.
 function migrate() {
   let changed = false;
-  if (!state.workoutTypes.length) {
-    state.workoutTypes = DEFAULT_TYPES.map((t) => Object.assign({ pace: 'km', hidden: false }, t, { movements: (t.movements || []).slice() }));
-    // The first version kept one list of movement names for everything: they go to Strength.
-    const str = state.workoutTypes.find((t) => t.id === 'strength');
-    for (const n of state.movementNames || []) if (!str.movements.some((m) => sameName(m, n))) str.movements.push(n);
-    changed = true;
-  }
-  if ('movementNames' in state) { delete state.movementNames; changed = true; }
-  // Average heart rate is now kept for every workout (it was only on distance workouts).
-  for (const w of state.workouts) {
-    if (w.cardio && 'avgHr' in w.cardio) { if (w.avgHr == null) w.avgHr = w.cardio.avgHr; delete w.cardio.avgHr; changed = true; }
-  }
-  // Workouts saved before types had ids get their type's id (HIIT is now Functional).
-  for (const w of state.workouts) {
-    if (w.typeId && state.workoutTypes.some((t) => t.id === w.typeId)) continue;
-    if (w.type === 'HIIT') w.type = 'Functional';
-    let t = state.workoutTypes.find((x) => sameName(x.name, w.type || 'Other'));
-    if (!t) {
-      t = { id: uid(), name: w.type || 'Other', icon: '💪', kind: w.kind || 'other', pace: 'km', movements: [], hidden: false };
-      state.workoutTypes.push(t);
+  if (!state.categories.length) { state.categories = DEFAULT_CATS.map((c) => Object.assign({}, c, { words: c.words.slice() })); changed = true; }
+  // Workouts logged in the earlier version go on the calendar (the workouts themselves are kept as they were).
+  if (!state.settings.calendarFromWorkouts) {
+    for (const w of state.workouts || []) {
+      if (!w.date) continue;
+      state.activities.push({ id: uid(), date: w.date, time: null, name: w.type || 'Workout', catId: guessCat(w.type), source: 'workout log' });
     }
-    w.typeId = t.id; w.type = t.name; w.kind = t.kind;
+    state.settings.calendarFromWorkouts = true;
     changed = true;
   }
   return changed;
@@ -142,22 +131,6 @@ function fmtTime(sec) {
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
   return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
-// Pace is stored as seconds per km; it is typed and shown the way each sport usually shows it.
-function parsePace(v, how) {
-  const s = String(v ?? '').trim();
-  if (!s) return null;
-  if (how === 'speed') { const kmh = num(s); return kmh > 0 ? 3600 / kmh : NaN; }
-  const sec = parseTime(s); // "5:30" or "5.30" (min:sec), or "5" (minutes)
-  if (!(sec > 0)) return NaN;
-  return how === '100m' ? sec * 10 : sec;
-}
-function fmtPace(secPerKm, how, withUnit) {
-  if (!(secPerKm > 0)) return '';
-  if (how === 'speed') return fmt(3600 / secPerKm, 1) + (withUnit ? ' km/h' : '');
-  const sec = how === '100m' ? secPerKm / 10 : secPerKm;
-  return fmtTime(sec) + (withUnit ? (how === '100m' ? ' /100 m' : ' /km') : '');
-}
-const fmtDist = (km, t) => (km == null ? '' : t.pace === '100m' ? `${fmt(km * 1000, 0)} m` : `${fmt(km, 2)} km`);
 const fmtSleep = (h) => { if (h == null) return ''; const m = Math.round(h * 60); return `${Math.floor(m / 60)}h ${pad(m % 60)}m`; };
 // Sleep typed as "7:30" or "7.5" hours.
 function parseSleep(v) {
@@ -181,11 +154,11 @@ function toast(msg) {
 
 /* ---------- Views ---------- */
 const VIEWS = {
-  workouts: { title: 'Workouts', add: 'Add workout', open: () => workoutSheet() },
+  calendar: { title: 'Calendar', add: 'Add a session', open: () => daySheet(today(), true) },
   body: { title: 'Body', add: 'Add body measurement', open: () => bodySheet() },
   recovery: { title: 'Recovery', add: 'Add recovery', open: () => recoverySheet() }
 };
-let currentView = 'workouts';
+let currentView = 'calendar';
 function show(view) {
   currentView = view;
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + view));
@@ -221,7 +194,7 @@ $('#sheet').addEventListener('click', (e) => { if (e.target.closest('[data-close
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#sheet').classList.contains('hidden')) closeSheet(); });
 
 function render() {
-  if (currentView === 'workouts') renderWorkouts();
+  if (currentView === 'calendar') renderCalendar();
   if (currentView === 'body') renderBody();
   if (currentView === 'recovery') renderRecovery();
 }
@@ -236,568 +209,155 @@ function groupedList(entries, itemHtml) {
   return html;
 }
 
-/* ---------- Workouts ---------- */
-const setCount = (w) => (w.movements || []).reduce((n, m) => n + m.sets.length, 0);
-const topWeight = (w) => Math.max(0, ...(w.movements || []).flatMap((m) => m.sets.map((s) => s.weightKg || 0)));
-// What a movement's sets count: reps, calories (rower, SkiErg, bike) or metres.
-const UNITS = { reps: 'Reps', cal: 'Cal', m: 'Metres' };
-const CAL_MACHINE = /\b(row|rower|rowing|ski|skierg|ski ?erg|bike|assault|echo|air ?bike|bike ?erg|airdyne|c2)\b/i;
-function workoutSummary(w) {
-  const parts = [];
-  const how = typeOfW(w).pace;
-  if (w.cardio) {
-    const c = w.cardio;
-    if (c.distanceKm != null) parts.push(fmtDist(c.distanceKm, typeOfW(w)));
-    if (c.paceSecPerKm) parts.push(fmtPace(c.paceSecPerKm, how, true));
-    if (c.intervals && c.intervals.length) parts.push(intervalSummary(c.intervals, typeOfW(w)));
-  }
-  if (w.movements && w.movements.length) {
-    // Round-by-round movements are joined with "+": "Thruster + Pull-up, Run 400 m".
-    const names = [];
-    w.movements.forEach((m, i) => { if (i && m.group && m.group === w.movements[i - 1].group) names[names.length - 1] += ' + ' + m.name; else names.push(m.name); });
-    parts.push(names.join(', '));
-    parts.push(`${setCount(w)} set${setCount(w) === 1 ? '' : 's'}`);
-    if (topWeight(w)) parts.push(`top ${fmt(topWeight(w), 1)} kg`);
-  }
-  if (w.avgHr) parts.push(`${w.avgHr} bpm`);
-  if (w.calories) parts.push(`${fmt(w.calories, 0)} kcal`);
-  if (!parts.length && w.notes) parts.push(w.notes);
-  return parts.join(' · ');
-}
-// Intervals in short, e.g. "6 × 800 m" or "4 × 400 m + 2 × 1 km" or "5 × 4:00": runs of the same rep.
-function intervalSummary(reps, t) {
-  const label = (r) => (r.distanceKm ? fmtIntDist(r.distanceKm, t, true) : r.timeSec ? fmtTime(r.timeSec) : '?');
-  const groups = [];
-  for (const r of reps) {
-    const l = label(r), g = groups[groups.length - 1];
-    if (g && g.l === l) g.n++; else groups.push({ l, n: 1 });
-  }
-  return groups.map((g) => (g.n > 1 ? `${g.n} × ${g.l}` : g.l)).join(' + ');
-}
-// Interval distances are in metres (km for types shown in km/h, such as cycling).
-const intInKm = (t) => t.pace === 'speed';
-function fmtIntDist(km, t, unit) {
-  if (intInKm(t)) return `${+km.toFixed(2)}${unit ? ' km' : ''}`;
-  const m = Math.round(km * 1000);
-  return unit && m >= 1000 && m % 1000 === 0 ? `${m / 1000} km` : `${m}${unit ? ' m' : ''}`;
-}
-function workoutLength(w) {
-  if (w.cardio && w.cardio.timeSec) return fmtTime(w.cardio.timeSec);
-  if (w.durationMin) return `${fmt(w.durationMin, 0)} min`;
-  return '';
-}
-function renderWorkouts() {
-  const list = $('#workoutList');
-  const ws = [...state.workouts].sort(byDateDesc);
-  if (!ws.length) {
-    list.innerHTML = `<div class="empty">No workouts yet.<br>Tap <strong>+</strong> to log a run, a gym session or anything else.</div>`;
-    return;
-  }
-  list.innerHTML = groupedList(ws, (w) => `<button class="item" data-w="${w.id}">
-      <span class="ico" aria-hidden="true">${esc(typeOfW(w).icon)}</span>
-      <div class="left"><div class="title">${esc(w.type)}</div><div class="sub">${esc(workoutSummary(w)) || '&nbsp;'}</div></div>
-      <div class="amt">${esc(workoutLength(w))}</div></button>`);
-  $$('[data-w]', list).forEach((el) => el.addEventListener('click', () => workoutSheet(el.dataset.w)));
-}
 
-// Add or edit a workout. `copyFrom` starts a new workout from an earlier one (same type, movements and sets).
-// `imp` (from a screenshot import): copyFrom is the workout read from the screenshots; imp.banner is shown at the
-// top, imp.bind({ addRep }) wires it up, imp.onDone() runs after saving.
-function workoutSheet(id, copyFrom, imp) {
-  const existing = id ? state.workouts.find((w) => w.id === id) : null;
-  const src = existing || copyFrom || null;
-  // `type` is the id of the workout type picked in the form.
-  let type = src ? typeOfW(src).id : (state.workoutTypes.find((t) => !t.hidden) || typeOf('')).id;
-  const c = (src && src.cardio) || {};
-  openSheet(existing ? 'Edit workout' : imp ? 'Check imported workout' : 'New workout', `
-    <form class="form" id="wForm" novalidate>
-      ${imp ? imp.banner : ''}
-      <label>Date <input type="date" id="wDate" value="${esc(existing ? existing.date : imp && src.date ? src.date : today())}" required></label>
-      <div><div class="small" style="font-weight:600;margin-bottom:6px">Type</div>
-        <div class="types" id="wTypes">${state.workoutTypes.filter((t) => !t.hidden || t.id === type)
-          .map((t) => `<button type="button" data-t="${esc(t.id)}">${esc(t.icon)} ${esc(t.name)}</button>`).join('')}</div>
-        <div class="hint" style="margin-top:6px">Add or change types under Workouts → <strong>Workout types</strong>.</div></div>
-
-      <div class="box" id="wCardio">
-        <h3 id="wCardioHead">Distance, time and pace</h3>
-        <div class="grid2">
-          <label><span id="wDistLabel">Distance (km)</span><input id="wDist" inputmode="decimal" autocomplete="off"></label>
-          <label>Time <input id="wTime" inputmode="decimal" data-fmt="time" placeholder="e.g. 28:36" autocomplete="off"></label>
-          <label><span id="wPaceLabel">Pace (min:sec /km)</span><input id="wPace" inputmode="decimal" data-fmt="pace" autocomplete="off"></label>
-        </div>
-        <div class="hint">Fill in any two of distance, time and pace — the third is worked out. Times can be typed with a dot instead of ":" (28.36 = 28:36).</div>
-        <div id="wIntWrap" class="form" style="gap:8px">
-          <h3>Intervals <span class="hint">optional</span></h3>
-          <div class="int-row int-head hidden" id="wIntHead"><span>Rep</span><span id="wIntDistHead">m</span><span>Time</span><span id="wIntPaceHead">Pace</span><span>Rest</span><span></span></div>
-          <div id="wInts"></div>
-          <button type="button" class="mini-btn" id="wAddRep">+ Add intervals</button>
-          <div class="hint hidden" id="wIntHint">One row per rep. <strong>+ Add rep</strong> copies the one before. Fill in any two of distance, time and pace; rest is the rest after that rep.</div>
-        </div>
-      </div>
-
-      <div class="box" id="wStrength">
-        <h3>Movements</h3>
-        <div id="wMoves" class="form" style="gap:10px"></div>
-        <button type="button" class="mini-btn" id="wAddMove">+ Add movement</button>
-        <datalist id="moveNames"></datalist>
-      </div>
-
-      <div class="grid2">
-        <label>Avg heart rate <input id="wHr" inputmode="numeric" placeholder="bpm" autocomplete="off"></label>
-        <label>Calories <input id="wCal" inputmode="numeric" placeholder="kcal" autocomplete="off"></label>
-      </div>
-      <div class="from-shots"><button type="button" class="mini-btn" id="wFromShots">📷 Add numbers from screenshots</button>
-        <div class="hint">e.g. average heart rate and calories from Garmin or Whoop for a WodUp workout. Only fills what's empty.</div>
-        <div id="wFromShotsInfo" class="hint"></div></div>
-      <label id="wDurWrap">Duration (minutes) <input id="wDur" inputmode="numeric" autocomplete="off" placeholder="e.g. 45"></label>
-      <label>Notes <textarea id="wNotes" placeholder="How did it feel? Where?">${esc(src ? src.notes : '')}</textarea></label>
-      <button class="btn" type="submit">${existing ? 'Save changes' : 'Save workout'}</button>
-      ${existing ? `<div class="btn-row"><button type="button" class="btn secondary" id="wCopy">Log again</button>
-        <button type="button" class="btn danger" id="wDel">Delete</button></div>` : ''}
+/* ---------- Calendar ---------- */
+let calMonth = null; // 'YYYY-MM' shown
+const byTime = (a, b) => (a.time || '99').localeCompare(b.time || '99') || (a.savedAt || '').localeCompare(b.savedAt || '');
+const dayActs = (iso) => state.activities.filter((a) => a.date === iso).sort(byTime);
+// Monday of the week a day is in.
+function weekStart(iso) { const d = dayDate(iso); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return isoDay(d); }
+function addDays(iso, n) { const d = dayDate(iso); d.setDate(d.getDate() + n); return isoDay(d); }
+// "🏋️ Strength 2 · 🏃 Easy run 3", in category order.
+function countChips(acts) {
+  if (!acts.length) return '<span class="muted small">Nothing yet</span>';
+  const n = {};
+  for (const a of acts) n[catOf(a.catId).id] = (n[catOf(a.catId).id] || 0) + 1;
+  const order = state.categories.map((c) => c.id).concat(OTHER.id);
+  return Object.keys(n).sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((id) => { const c = catOf(id);
+    return `<span class="count-chip" style="--c:${c.color}">${c.icon} ${esc(c.name)} <strong>${n[id]}</strong></span>`; }).join('');
+}
+function renderCalendar() {
+  if (!calMonth) calMonth = today().slice(0, 7);
+  const [y, m] = calMonth.split('-').map(Number);
+  const first = new Date(y, m - 1, 1);
+  const lead = (first.getDay() + 6) % 7, days = new Date(y, m, 0).getDate();
+  const t = today();
+  let cells = '';
+  for (let i = 0; i < lead; i++) cells += '<div class="day blank"></div>';
+  for (let d = 1; d <= days; d++) {
+    const iso = `${calMonth}-${pad(d)}`, acts = dayActs(iso);
+    cells += `<button type="button" class="day${iso === t ? ' today' : ''}${iso > t ? ' future' : ''}" data-day="${iso}" aria-label="${esc(niceDate(iso))}: ${acts.length ? esc(acts.map((a) => catOf(a.catId).name).join(', ')) : 'nothing'}">
+      <span class="n">${d}</span><span class="marks">${acts.slice(0, 4).map((a) => { const c = catOf(a.catId); return `<span class="mark" style="--c:${c.color}" title="${esc(a.name)}">${c.icon}</span>`; }).join('')}${acts.length > 4 ? `<span class="more">+${acts.length - 4}</span>` : ''}</span></button>`;
+  }
+  const ws = weekStart(t), we = addDays(ws, 6);
+  const monthActs = state.activities.filter((a) => a.date.slice(0, 7) === calMonth);
+  const weekActs = state.activities.filter((a) => a.date >= ws && a.date <= we);
+  $('#calendar').innerHTML = `<div class="card cal">
+      <div class="cal-head"><button type="button" class="icon-btn" data-cal="-1" aria-label="Previous month">‹</button>
+        <h2>${esc(first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }))}</h2>
+        <button type="button" class="icon-btn" data-cal="1" aria-label="Next month">›</button></div>
+      <div class="cal-grid">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((x) => `<div class="dow">${x}</div>`).join('')}${cells}</div>
+      ${calMonth !== t.slice(0, 7) ? '<button type="button" class="link-btn" data-cal="0">Back to this month</button>' : ''}
+    </div>
+    <div class="card"><h2>This week</h2><div class="counts">${countChips(weekActs)}</div></div>
+    <div class="card"><h2>${esc(first.toLocaleDateString(undefined, { month: 'long' }))}</h2><div class="counts">${countChips(monthActs)}</div></div>
+    ${state.activities.length ? '' : '<div class="empty">Nothing on the calendar yet.<br>Tap <strong>📷 Import from Garmin</strong> and pick a screenshot of Garmin Connect\'s <strong>All Activities</strong> list, or tap a day.</div>'}`;
+  $$('[data-cal]').forEach((b) => b.addEventListener('click', () => {
+    const k = +b.dataset.cal;
+    if (!k) calMonth = today().slice(0, 7);
+    else { const d = new Date(y, m - 1 + k, 1); calMonth = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; }
+    renderCalendar();
+  }));
+  $$('[data-day]').forEach((b) => b.addEventListener('click', () => daySheet(b.dataset.day)));
+}
+const catOptions = (sel) => state.categories.map((c) => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${c.icon} ${esc(c.name)}</option>`).join('');
+// A day's sessions: change their category or name, add or delete.
+function daySheet(iso, addNew) {
+  const acts = dayActs(iso);
+  const row = (a) => `<div class="act-row" data-id="${a ? a.id : ''}">
+      <select class="acat" aria-label="Category">${catOptions(a ? a.catId : guessCat(''))}</select>
+      <input class="aname" placeholder="Name (optional)" aria-label="Name" value="${esc(a ? a.name : '')}" autocomplete="off">
+      <button type="button" class="x-btn" aria-label="Delete">🗑</button>
+      ${a && a.time ? `<span class="muted small atime">${esc(a.time)}</span>` : ''}</div>`;
+  openSheet(niceDate(iso), `<form class="form" id="dForm" novalidate>
+      <label>Date <input type="date" id="dDate" value="${esc(iso)}" required></label>
+      <div id="acts">${acts.map(row).join('')}</div>
+      <button type="button" class="mini-btn" id="addAct">+ Add a session</button>
+      <div class="hint">The category is what shows on the calendar. Change it for an imported name and that name gets this category next time too.</div>
+      <button class="btn" type="submit">Save</button>
     </form>`);
-
-  // When you leave a time, pace or rest box, it's shown the way it was read ("2.40" → "2:40", "90" rest → "1:30").
-  $('#wForm').addEventListener('change', (e) => {
-    const el = e.target, f = el.dataset && el.dataset.fmt;
-    if (!f || !el.value.trim()) return;
-    const v = f === 'time' ? parseTime(el.value) : f === 'rest' ? parseRest(el.value) : parsePace(el.value, how());
-    if (!(v > 0)) return;
-    if (f === 'pace') { if (how() !== 'speed') el.value = fmtPace(v, how()); } else el.value = fmtTime(v);
-  });
-
-  // Cardio: distance, time and pace — the two typed last work out the third.
-  const fields = { dist: $('#wDist'), time: $('#wTime'), pace: $('#wPace') };
-  let edited = [];
-  const how = () => typeOf(type).pace;
-  const readDist = () => { const n = num(fields.dist.value); return n == null || isNaN(n) ? n : how() === '100m' ? n / 1000 : n; };
-  const showDist = (km) => showDistFor(km, typeOf(type));
-  function workOut() {
-    const pair = edited.slice(-2);
-    if (pair.length < 2) return;
-    const d = readDist(), t = parseTime(fields.time.value), p = parsePace(fields.pace.value, how());
-    const ok = (x) => x != null && x > 0;
-    if (!pair.includes('pace') && ok(d) && ok(t)) fields.pace.value = fmtPace(t / d, how());
-    else if (!pair.includes('time') && ok(d) && ok(p)) fields.time.value = fmtTime(p * d);
-    else if (!pair.includes('dist') && ok(t) && ok(p)) fields.dist.value = showDist(t / p);
-  }
-  for (const [k, el] of Object.entries(fields)) {
-    el.addEventListener('input', () => { edited = edited.filter((x) => x !== k).concat(el.value.trim() ? [k] : []); workOut(); });
-  }
-  if (c.distanceKm != null) fields.dist.value = showDistFor(c.distanceKm, typeOf(type));
-  if (c.timeSec) fields.time.value = fmtTime(c.timeSec);
-  if (c.paceSecPerKm) fields.pace.value = fmtPace(c.paceSecPerKm, typeOf(type).pace);
-  // Heart rate and calories belong to one session: kept when editing or importing, not when logging again.
-  const own = existing || (imp ? src : null);
-  if (own && (own.avgHr || c.avgHr)) $('#wHr').value = own.avgHr || c.avgHr;
-  if (own && own.calories) $('#wCal').value = own.calories;
-  // A duration worked out from the cardio time isn't shown, so it follows the time if that changes.
-  if (src && src.durationMin && !(c.timeSec && src.durationMin === Math.round(c.timeSec / 60))) $('#wDur').value = src.durationMin;
-  // Editing a saved workout: changing the distance or time updates the pace.
-  edited = ['pace', 'dist', 'time'].filter((k) => fields[k].value);
-
-  // Intervals: one row per rep (distance, time, pace, rest after it).
-  const intUnit = () => intInKm(typeOf(type));
-  const repDist = (row) => { const n = num($('.idist', row).value); return n == null || isNaN(n) ? n : intUnit() ? n : n / 1000; };
-  function addRep(r) {
-    const row = document.createElement('div');
-    row.className = 'int-row';
-    const t = typeOf(type);
-    row.innerHTML = `<span class="n"></span>
-      <input class="idist" inputmode="decimal" aria-label="Rep distance" value="${r && r.distanceKm ? fmtIntDist(r.distanceKm, t) : ''}">
-      <input class="itime" inputmode="decimal" data-fmt="time" aria-label="Rep time (min:sec)" value="${r && r.timeSec ? fmtTime(r.timeSec) : ''}">
-      <input class="ipace" inputmode="decimal" data-fmt="pace" aria-label="Rep pace" value="${r && r.paceSecPerKm ? fmtPace(r.paceSecPerKm, t.pace) : ''}">
-      <input class="irest" inputmode="decimal" data-fmt="rest" aria-label="Rest after this rep (min:sec or seconds)" value="${r && r.restSec ? fmtTime(r.restSec) : ''}">
-      <button type="button" class="x-btn" aria-label="Remove rep">✕</button>`;
-    const f = { dist: $('.idist', row), time: $('.itime', row), pace: $('.ipace', row) };
-    let order = ['pace', 'dist', 'time'].filter((k) => f[k].value);
-    const solve = () => {
-      const pair = order.slice(-2);
-      if (pair.length < 2) return;
-      const d = repDist(row), tm = parseTime(f.time.value), p = parsePace(f.pace.value, how());
-      const ok = (x) => x != null && x > 0;
-      if (!pair.includes('pace') && ok(d) && ok(tm)) f.pace.value = fmtPace(tm / d, how());
-      else if (!pair.includes('time') && ok(d) && ok(p)) f.time.value = fmtTime(p * d);
-      else if (!pair.includes('dist') && ok(tm) && ok(p)) f.dist.value = fmtIntDist(tm / p, typeOf(type));
-    };
-    for (const [k, el] of Object.entries(f)) el.addEventListener('input', () => { order = order.filter((x) => x !== k).concat(el.value.trim() ? [k] : []); solve(); });
-    $('.x-btn', row).addEventListener('click', () => { row.remove(); repsChanged(); });
-    $('#wInts').appendChild(row);
-    repsChanged();
-    return row;
-  }
-  function repsChanged() {
-    const rows = $$('#wInts .int-row');
-    rows.forEach((r, i) => { $('.n', r).textContent = i + 1; });
-    $('#wIntHead').classList.toggle('hidden', !rows.length);
-    $('#wIntHint').classList.toggle('hidden', !rows.length);
-    $('#wAddRep').textContent = rows.length ? '+ Add rep' : '+ Add intervals';
-  }
-  // The reps as typed, read in the given pace unit: [{distanceKm, timeSec, paceSecPerKm, restSec}] (NaN where unreadable).
-  function readReps(paceHow, inKm) {
-    return $$('#wInts .int-row').map((row) => {
-      const n = num($('.idist', row).value);
-      return { distanceKm: n == null || isNaN(n) ? n : inKm ? n : n / 1000, timeSec: parseTime($('.itime', row).value),
-        paceSecPerKm: parsePace($('.ipace', row).value, paceHow), restSec: parseRest($('.irest', row).value) };
-    });
-  }
-  $('#wAddRep').addEventListener('click', () => {
-    const prev = $$('#wInts .int-row').pop();
-    const row = addRep(prev ? readReps(how(), intUnit()).pop() : null);
-    if (!prev) $('.idist', row).focus();
-  });
-  for (const r of c.intervals || []) addRep(r);
-
-  function setType(t) {
-    const before = how(), beforeKm = intUnit();
-    const reps = readReps(before, beforeKm);
-    // Keep the distance and pace the same when switching between sports shown in different units.
-    const d = readDist(), p = parsePace(fields.pace.value, before);
-    type = t;
-    $$('#wTypes button').forEach((b) => b.classList.toggle('on', b.dataset.t === t));
-    const kind = typeOf(t).kind;
-    $('#wCardio').classList.toggle('hidden', kind !== 'cardio');
-    $('#wStrength').classList.toggle('hidden', kind !== 'strength');
-    $('#wDistLabel').textContent = how() === '100m' ? 'Distance (m)' : 'Distance (km)';
-    $('#wPaceLabel').textContent = how() === 'speed' ? 'Speed (km/h)' : how() === '100m' ? 'Pace (min:sec /100 m)' : 'Pace (min:sec /km)';
-    fields.pace.placeholder = how() === 'speed' ? 'e.g. 25' : how() === '100m' ? 'e.g. 2:05' : 'e.g. 5:30';
-    fields.dist.placeholder = how() === '100m' ? 'e.g. 1500' : 'e.g. 5.2';
-    if (before !== how()) {
-      if (d > 0) fields.dist.value = showDist(d);
-      if (p > 0) fields.pace.value = fmtPace(p, how());
-    }
-    // Intervals: show the reps in the new type's units.
-    $('#wIntDistHead').textContent = intUnit() ? 'km' : 'm';
-    $('#wIntPaceHead').textContent = how() === 'speed' ? 'km/h' : how() === '100m' ? '/100 m' : '/km';
-    if (before !== how() || beforeKm !== intUnit()) {
-      $('#wInts').innerHTML = '';
-      for (const r of reps) addRep({ distanceKm: r.distanceKm > 0 ? r.distanceKm : null, timeSec: r.timeSec > 0 ? r.timeSec : null,
-        paceSecPerKm: r.paceSecPerKm > 0 ? r.paceSecPerKm : null, restSec: r.restSec > 0 ? r.restSec : null });
-    }
-    // Distance & pace workouts: the time is the duration, so there's no separate duration box.
-    $('#wDurWrap').classList.toggle('hidden', kind === 'cardio');
-    // This type's movements are suggested first, then movements from your other types.
-    const mine = typeOf(t).movements || [];
-    $('#moveNames').innerHTML = [...mine, ...allMoveNames().filter((n) => !mine.some((m) => sameName(m, n)))].map((n) => `<option value="${esc(n)}">`).join('');
-    $$('#wMoves .mname').forEach((i) => { i.placeholder = `Movement, e.g. ${mine[0] || 'Squat'}`; });
-    if (kind === 'strength' && !$('#wMoves').children.length) addMove();
-  }
-  $$('#wTypes button').forEach((b) => b.addEventListener('click', () => setType(b.dataset.t)));
-
-  // Strength: movements, each with sets of reps × kg.
-  function addSet(setsEl, s) {
-    const row = document.createElement('div');
-    row.className = 'set-row';
-    row.innerHTML = `<span class="n"></span>
-      <input class="reps" inputmode="numeric" placeholder="${{ cal: 'cal', m: 'm' }[setsEl.dataset.unit] || 'reps'}" aria-label="Reps, calories or metres" value="${s && s.reps != null ? s.reps : ''}">
-      <input class="kg" inputmode="decimal" placeholder="kg" aria-label="Weight in kg" value="${s && s.weightKg != null ? s.weightKg : ''}">
-      <button type="button" class="x-btn" aria-label="Remove set">✕</button>`;
-    $('.x-btn', row).addEventListener('click', () => { row.remove(); numberSets(setsEl); });
-    setsEl.appendChild(row);
-    numberSets(setsEl);
-    return row;
-  }
-  function numberSets(setsEl) { $$('.set-row', setsEl).forEach((r, i) => { $('.n', r).textContent = i + 1; }); }
-  function addMove(m) {
-    const el = document.createElement('div');
-    el.className = 'move';
-    el.innerHTML = `<label class="check link-row"><input type="checkbox" class="mlink" ${m && m.linkPrev ? 'checked' : ''}> 🔗 Round by round with the movement above</label>
-      <div class="move-head"><input class="mname" list="moveNames" placeholder="Movement, e.g. ${esc((typeOf(type).movements || [])[0] || 'Squat')}" aria-label="Movement" value="${esc(m ? m.name : '')}" autocomplete="off">
-        <button type="button" class="x-btn" aria-label="Remove movement">🗑</button></div>
-      <label class="rest-row">Rest between sets <input class="rest" inputmode="decimal" data-fmt="rest" placeholder="e.g. 1:30" aria-label="Rest between sets (min:sec, or seconds)" value="${m && m.restSec ? fmtTime(m.restSec) : ''}" autocomplete="off"></label>
-      <div class="unit-row"><span class="muted small">Count in</span><input type="hidden" class="munit" value="${(m && m.unit) || 'reps'}">
-        ${Object.entries(UNITS).map(([k, v]) => `<button type="button" class="unit-chip" data-u="${k}">${v}</button>`).join('')}</div>
-      <div class="set-row set-head"><span>Set</span><span class="reps-h">Reps</span><span class="kg-h">kg</span><span></span></div>
-      <div class="sets"></div>
-      <button type="button" class="mini-btn add-set">+ Add set</button>`;
-    const setsEl = $('.sets', el);
-    $('.move-head .x-btn', el).addEventListener('click', () => el.remove());
-    // Reps, calories or metres: calories and metres have no weight.
-    const unitSel = $('.munit', el);
-    const showUnit = () => {
-      setsEl.dataset.unit = unitSel.value;
-      $$('.unit-chip', el).forEach((b) => b.classList.toggle('on', b.dataset.u === unitSel.value));
-      $('.reps-h', el).textContent = UNITS[unitSel.value];
-      el.classList.toggle('no-kg', unitSel.value !== 'reps');
-      $$('.reps', el).forEach((i) => { i.placeholder = { cal: 'cal', m: 'm' }[unitSel.value] || 'reps'; });
-    };
-    $$('.unit-chip', el).forEach((b) => b.addEventListener('click', () => { unitSel.value = b.dataset.u; unitSel.dataset.chosen = '1'; showUnit(); }));
-    showUnit();
-    // Linked to the movement above: done round by round (set 1 of each, then set 2 of each…).
-    const linkBox = $('.mlink', el);
-    const showLink = () => el.classList.toggle('linked', linkBox.checked);
-    linkBox.addEventListener('change', showLink);
-    showLink();
-    // The name as read from a screenshot: if you change it, the new name is used for it next time.
-    if (m && m.importedName) $('.mname', el).dataset.imported = m.importedName;
-    // Picking a movement fills in the rest you used for it last time (if the box is still empty).
-    $('.mname', el).addEventListener('change', () => {
-      // A rower, SkiErg or bike starts on calories, unless you've chosen otherwise (tap Metres for a distance).
-      if (!unitSel.dataset.chosen && !(m && m.unit) && CAL_MACHINE.test($('.mname', el).value) && unitSel.value === 'reps') { unitSel.value = 'cal'; showUnit(); }
-      const restEl = $('.rest', el);
-      const last = lastRest($('.mname', el).value);
-      if (!restEl.value && last) restEl.value = fmtTime(last);
-    });
-    // A new set starts as a copy of the one before, so repeating sets takes one tap.
-    $('.add-set', el).addEventListener('click', () => {
-      const prev = $$('.set-row', setsEl).pop();
-      const row = addSet(setsEl, prev ? { reps: $('.reps', prev).value, weightKg: $('.kg', prev).value } : null);
-      $('.reps', row).focus();
-    });
-    for (const s of (m && m.sets) || [null]) addSet(setsEl, s);
-    $('#wMoves').appendChild(el);
-    return el;
-  }
-  $('#wAddMove').addEventListener('click', () => $('.mname', addMove()).focus());
-  ((src && src.movements) || []).forEach((m, i, all) => addMove(Object.assign({}, m, { linkPrev: !!(i && m.group && m.group === all[i - 1].group) })));
-  setType(type);
-  if (imp && imp.bind) imp.bind({ addRep, addMove });
-
-  $('#wForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const date = $('#wDate').value;
-    if (!date) return toast('Pick a date');
-    const t = typeOf(type), kind = t.kind;
-    let durationMin = kind === 'cardio' ? null : num($('#wDur').value);
-    if (isNaN(durationMin) || durationMin < 0 || durationMin > 1440) return toast('Check the duration (minutes)');
-    const hr = num($('#wHr').value), cal = num($('#wCal').value);
-    if (Number.isNaN(hr) || (hr != null && (hr < 30 || hr > 230))) return toast('Check the heart rate (bpm)');
-    if (Number.isNaN(cal) || (cal != null && (cal < 0 || cal > 10000))) return toast('Check the calories (kcal)');
-    const w = { id: existing ? existing.id : uid(), date, typeId: t.id, type: t.name, kind, durationMin: durationMin == null ? null : round(durationMin, 0),
-      avgHr: hr == null ? null : Math.round(hr), calories: cal == null ? null : Math.round(cal),
-      notes: $('#wNotes').value.trim(), source: existing ? existing.source || 'manual' : 'manual' };
-
-    if (kind === 'cardio') {
-      const d = readDist(), t = parseTime(fields.time.value), p = parsePace(fields.pace.value, how());
-      if (Number.isNaN(d) || (d != null && (d <= 0 || d > 1000))) return toast('Check the distance');
-      if (Number.isNaN(t) || (t != null && t <= 0)) return toast('Type the time as mm:ss or h:mm:ss');
-      if (Number.isNaN(p)) return toast(how() === 'speed' ? 'Check the speed' : 'Type the pace as min:sec, e.g. 5:30');
-      const cardio = { distanceKm: d == null ? null : round(d, 3), timeSec: t, paceSecPerKm: p == null ? null : Math.round(p) };
-      // Intervals: skip empty rows, check the rest, and work out each rep's missing value.
-      const reps = [];
-      for (const [i, r] of readReps(how(), intUnit()).entries()) {
-        if (r.distanceKm == null && r.timeSec == null && r.paceSecPerKm == null && r.restSec == null) continue;
-        if (Number.isNaN(r.distanceKm) || (r.distanceKm != null && r.distanceKm <= 0)) return toast(`Check the distance of rep ${i + 1}`);
-        if (Number.isNaN(r.timeSec) || (r.timeSec != null && r.timeSec <= 0)) return toast(`Type the time of rep ${i + 1} as min:sec`);
-        if (Number.isNaN(r.paceSecPerKm)) return toast(`Check the ${how() === 'speed' ? 'speed' : 'pace'} of rep ${i + 1}`);
-        if (Number.isNaN(r.restSec) || (r.restSec != null && r.restSec > 3600)) return toast(`Type the rest after rep ${i + 1} as min:sec or seconds`);
-        if (r.distanceKm == null && r.timeSec == null) return toast(`Give rep ${i + 1} a distance or a time`);
-        const rep = { distanceKm: r.distanceKm == null ? null : round(r.distanceKm, 3), timeSec: r.timeSec, paceSecPerKm: r.paceSecPerKm == null ? null : Math.round(r.paceSecPerKm), restSec: r.restSec };
-        if (!rep.paceSecPerKm && rep.distanceKm && rep.timeSec) rep.paceSecPerKm = Math.round(rep.timeSec / rep.distanceKm);
-        if (!rep.timeSec && rep.distanceKm && rep.paceSecPerKm) rep.timeSec = Math.round(rep.paceSecPerKm * rep.distanceKm);
-        if (rep.distanceKm == null && rep.timeSec && rep.paceSecPerKm) rep.distanceKm = round(rep.timeSec / rep.paceSecPerKm, 3);
-        reps.push(rep);
-      }
-      if (reps.length) {
-        cardio.intervals = reps;
-        // No total distance or time typed: use the reps' distance. (With a total time but no total distance, the
-        // reps' distance would leave out the warm-up and the rests and give a wrong pace, so it isn't used.)
-        if (cardio.distanceKm == null && cardio.timeSec == null && cardio.paceSecPerKm == null && reps.every((r) => r.distanceKm)) cardio.distanceKm = round(reps.reduce((n, r) => n + r.distanceKm, 0), 3);
-      }
-      // Work out whatever can be worked out from the rest.
-      if (!cardio.paceSecPerKm && cardio.distanceKm && cardio.timeSec) cardio.paceSecPerKm = Math.round(cardio.timeSec / cardio.distanceKm);
-      if (!cardio.timeSec && cardio.distanceKm && cardio.paceSecPerKm) cardio.timeSec = Math.round(cardio.paceSecPerKm * cardio.distanceKm);
-      if (cardio.distanceKm == null && cardio.timeSec && cardio.paceSecPerKm) cardio.distanceKm = round(cardio.timeSec / cardio.paceSecPerKm, 3);
-      w.cardio = cardio;
-      if (w.durationMin == null && cardio.timeSec) w.durationMin = Math.round(cardio.timeSec / 60);
-    }
-    if (kind === 'strength') {
-      const movements = [];
-      let group = null, groups = 0;
-      for (const el of $$('#wMoves .move')) {
-        const name = $('.mname', el).value.trim().replace(/\s+/g, ' ');
-        const restSec = parseRest($('.rest', el).value);
-        if (Number.isNaN(restSec) || (restSec != null && restSec > 3600)) return toast(`Type the rest for ${name || 'each movement'} as min:sec (e.g. 1:30) or seconds (e.g. 90)`);
-        const sets = [], unit = $('.munit', el).value;
-        const word = { cal: 'calories', m: 'metres' }[unit] || 'reps';
-        for (const r of $$('.sets .set-row', el)) {
-          const reps = num($('.reps', r).value), kg = unit === 'reps' ? num($('.kg', r).value) : null;
-          if (reps == null && kg == null) continue;
-          if (reps == null || isNaN(reps) || reps <= 0 || reps > (unit === 'm' ? 100000 : 1000) || reps % 1) return toast(`Check the ${word} for ${name || 'each set'}`);
-          if (isNaN(kg) || (kg != null && (kg < 0 || kg > 1000))) return toast(`Check the weight for ${name || 'each set'}`);
-          sets.push({ reps, weightKg: kg == null ? null : round(kg, 2) });
-        }
-        if (!name && !sets.length) continue;
-        if (!name) return toast('Give each movement a name');
-        // Remember a movement renamed after an import, so the next import uses your name.
-        const imported = $('.mname', el).dataset.imported;
-        if (imported && !sameName(imported, name)) {
-          if (!state.importAliases) state.importAliases = {};
-          state.importAliases[imported.toLowerCase()] = name;
-        }
-        // Ticked "round by round with the movement above": same group as it; otherwise a group of its own.
-        group = movements.length && $('.mlink', el).checked ? group : 'g' + ++groups;
-        movements.push(Object.assign({ name: matchName(name, t), restSec, group, sets }, unit !== 'reps' ? { unit } : {}));
-      }
-      // A group with one movement is just that movement.
-      for (const mv of movements) if (movements.filter((x) => x.group === mv.group).length < 2) mv.group = null;
-      w.movements = movements;
-      // New movements are added to this type's list.
-      if (!Array.isArray(t.movements)) t.movements = [];
-      for (const m of movements) if (!t.movements.some((n) => sameName(n, m.name))) t.movements.push(m.name);
-    }
-
-    if (existing) Object.keys(existing).forEach((k) => { if (!(k in w) && k !== 'savedAt' && k !== 'updatedAt') delete existing[k]; });
-    if (imp) w.source = imp.source;
-    if (existing) Object.assign(existing, w); else state.workouts.push(w);
-    await save();
-    closeSheet(); render();
-    toast(existing ? 'Workout updated' : 'Workout saved 💪');
-    if (imp && imp.onDone) imp.onDone();
-  });
-
-  if (existing) {
-    $('#wCopy').addEventListener('click', () => workoutSheet(null, existing));
-    $('#wDel').addEventListener('click', async () => {
-      if (!confirm(`Delete the ${existing.type} workout ${onDay(existing.date)}?`)) return;
-      state.workouts = state.workouts.filter((x) => x.id !== existing.id);
-      await save();
-      closeSheet(); render();
-      toast('Workout deleted');
-    });
-  }
-}
-// Rest between sets: "1:30" or "1.30" (min:sec), "90" or "90s" (seconds), "2m" / "2 min" (minutes).
-function parseRest(v) {
-  const s = String(v ?? '').trim().toLowerCase();
-  if (!s) return null;
-  if (/^\d+\s*[.,:]\s*\d{1,2}$/.test(s)) return parseTime(s);
-  let m = s.match(/^(\d+)\s*(s|sec|secs|seconds?)?$/);
-  if (m) return +m[1];
-  m = s.match(/^(\d+(?:[.,]\d+)?)\s*(m|min|mins|minutes?)$/);
-  if (m) return Math.round(num(m[1]) * 60);
-  return NaN;
-}
-// The rest you used for a movement the last time you logged it.
-function lastRest(name) {
-  const ws = state.workouts.filter((w) => w.movements).sort(byDateDesc);
-  for (const w of ws) for (const m of w.movements) if (sameName(m.name, name) && m.restSec) return m.restSec;
-  return null;
-}
-// A distance as typed in the form: metres for swims, km otherwise (no thousands separators).
-const showDistFor = (km, t) => (t.pace === '100m' ? String(Math.round(km * 1000)) : String(round(km, 2)));
-// Every movement name in your types and workouts, so "squat" and "Squat" are the same movement in charts later.
-function allMoveNames() {
-  const seen = new Map();
-  for (const t of state.workoutTypes) for (const n of t.movements || []) if (!seen.has(n.toLowerCase())) seen.set(n.toLowerCase(), n);
-  for (const w of state.workouts) for (const m of w.movements || []) if (!seen.has(m.name.toLowerCase())) seen.set(m.name.toLowerCase(), m.name);
-  return [...seen.values()].sort((a, b) => a.localeCompare(b));
-}
-// The spelling already used for a movement: this type's list first, then anywhere else.
-const matchName = (name, t) => ((t && t.movements) || []).find((n) => sameName(n, name)) || allMoveNames().find((n) => sameName(n, name)) || name;
-
-/* ---------- Managing workout types ---------- */
-const workoutsOfType = (id) => state.workouts.filter((w) => w.typeId === id);
-function typesSheet() {
-  const scroll = !$('#sheet').classList.contains('hidden') && $('#sheetTitle').textContent === 'Workout types' ? $('.sheet-panel').scrollTop : 0;
-  openSheet('Workout types', `
-    <p class="muted small" style="margin-top:0">Tap a type to rename it, change its icon or edit its movements. Use the arrows to change the order they're shown in.</p>
-    <div class="list" id="typeList">${state.workoutTypes.map((t, i) => {
-      const n = workoutsOfType(t.id).length;
-      const sub = [KINDS[t.kind], t.kind === 'strength' ? `${(t.movements || []).length} movement${(t.movements || []).length === 1 ? '' : 's'}` : '', n ? `${n} workout${n === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
-      return `<div class="type-row">
-        <button type="button" class="item${t.hidden ? ' faded' : ''}" data-type="${esc(t.id)}"><span class="ico" aria-hidden="true">${esc(t.icon)}</span>
-          <div class="left"><div class="title">${esc(t.name)}${t.hidden ? ' <span class="tag">hidden</span>' : ''}</div><div class="sub">${esc(sub)}</div></div><span class="chev" aria-hidden="true">›</span></button>
-        <div class="order"><button type="button" class="x-btn" data-up="${i}" ${i ? '' : 'disabled'} aria-label="Move ${esc(t.name)} up">↑</button>
-          <button type="button" class="x-btn" data-down="${i}" ${i < state.workoutTypes.length - 1 ? '' : 'disabled'} aria-label="Move ${esc(t.name)} down">↓</button></div>
-      </div>`;
-    }).join('')}</div>
-    <button type="button" class="btn secondary" id="typeNew">+ New workout type</button>`);
-  $('.sheet-panel').scrollTop = scroll;
-  $$('[data-type]').forEach((b) => b.addEventListener('click', () => typeSheet(b.dataset.type)));
-  const move = async (i, j) => {
-    const list = state.workoutTypes;
-    [list[i], list[j]] = [list[j], list[i]];
-    await save();
-    typesSheet();
+  const bindRow = (el) => {
+    $('.x-btn', el).addEventListener('click', () => el.remove());
+    // Typing a name picks its category, until you pick one yourself.
+    const sel = $('.acat', el);
+    sel.addEventListener('change', () => { sel.dataset.chosen = '1'; });
+    $('.aname', el).addEventListener('change', () => { if (!sel.dataset.chosen && !el.dataset.id) sel.value = guessCat($('.aname', el).value); });
   };
+  $$('.act-row').forEach(bindRow);
+  const add = () => { $('#acts').insertAdjacentHTML('beforeend', row(null)); const el = $('#acts').lastElementChild; bindRow(el); return el; };
+  $('#addAct').addEventListener('click', () => $('.acat', add()).focus());
+  if (addNew || !acts.length) add();
+  $('#dForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const date = $('#dDate').value;
+    if (!date) return toast('Pick a date');
+    const keep = new Set();
+    for (const el of $$('.act-row')) {
+      const catId = $('.acat', el).value, name = $('.aname', el).value.trim() || catOf(catId).name;
+      const was = el.dataset.id ? state.activities.find((a) => a.id === el.dataset.id) : null;
+      // A category picked for a name that would have got another one: remember it for that name.
+      if (catId !== guessCat(name) && !sameName(name, catOf(catId).name)) state.nameCats[name.toLowerCase()] = catId;
+      if (was) { Object.assign(was, { date, name, catId }); keep.add(was.id); }
+      else { const a = { id: uid(), date, time: null, name, catId, source: 'manual' }; state.activities.push(a); keep.add(a.id); }
+    }
+    state.activities = state.activities.filter((a) => a.date !== iso || keep.has(a.id));
+    await save();
+    closeSheet();
+    calMonth = date.slice(0, 7);
+    render();
+    toast('Saved');
+  });
+}
+
+/* ---------- Managing categories ---------- */
+function catsSheet() {
+  openSheet('Categories', `<div class="form">
+      <div class="hint">Shown on the calendar in this order. Each has words that put an activity in it by its name — the longest word found wins, so "Tempo run" is a tempo run even though "run" means an easy run.</div>
+      <div class="list">${state.categories.map((c, i) => `<div class="item cat-item">
+        <span class="ico" style="background:color-mix(in srgb, ${c.color} 22%, transparent)">${c.icon}</span>
+        <button type="button" class="left link-like" data-cat="${c.id}"><div class="title">${esc(c.name)}</div><div class="sub">${esc((c.words || []).join(', ')) || (c.id === 'other' ? 'anything not matched' : 'no words')}</div></button>
+        <span class="order"><button type="button" class="icon-btn" data-up="${i}" ${i ? '' : 'disabled'} aria-label="Move up">↑</button><button type="button" class="icon-btn" data-down="${i}" ${i < state.categories.length - 1 ? '' : 'disabled'} aria-label="Move down">↓</button></span></div>`).join('')}</div>
+      <button type="button" class="btn secondary" id="newCat">+ New category</button></div>`);
+  $$('[data-cat]').forEach((b) => b.addEventListener('click', () => catSheet(b.dataset.cat)));
+  const move = async (i, j) => { const c = state.categories; [c[i], c[j]] = [c[j], c[i]]; await save(); catsSheet(); render(); };
   $$('[data-up]').forEach((b) => b.addEventListener('click', () => move(+b.dataset.up, +b.dataset.up - 1)));
   $$('[data-down]').forEach((b) => b.addEventListener('click', () => move(+b.dataset.down, +b.dataset.down + 1)));
-  $('#typeNew').addEventListener('click', () => typeSheet(null));
+  $('#newCat').addEventListener('click', () => catSheet(null));
 }
-$('#typesBtn').addEventListener('click', typesSheet);
-
-function typeSheet(id) {
-  const t = id ? state.workoutTypes.find((x) => x.id === id) : null;
-  const used = t ? workoutsOfType(t.id).length : 0;
-  let kind = t ? t.kind : 'strength';
-  openSheet(t ? 'Edit workout type' : 'New workout type', `
-    <form class="form" id="tForm" novalidate>
-      <div class="grid-icon">
-        <label>Icon <input id="tIcon" value="${esc(t ? t.icon : '💪')}" maxlength="8" autocomplete="off" style="text-align:center;font-size:22px;padding:8px"></label>
-        <label>Name <input id="tName" value="${esc(t ? t.name : '')}" placeholder="e.g. CrossFit" maxlength="40" autocomplete="off"></label>
-      </div>
-      <div class="icons">${ICONS.map((i) => `<button type="button" data-icon="${i}" aria-label="Use ${i}">${i}</button>`).join('')}</div>
-      <div><div class="small" style="font-weight:600;margin-bottom:6px">What you log</div>
-        <div class="types" id="tKinds">${Object.entries(KINDS).map(([k, v]) => `<button type="button" data-k="${k}" ${used && k !== kind ? 'disabled' : ''}>${v}</button>`).join('')}</div>
-        ${used ? `<div class="hint" style="margin-top:6px">${used} workout${used === 1 ? ' uses' : 's use'} this type, so this can't change. Make a new type instead.</div>` : ''}</div>
-      <label id="tPaceWrap">Pace shown as <select id="tPace">${Object.entries(PACES).map(([k, v]) => `<option value="${k}" ${t && t.pace === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-      <div class="box" id="tMovesBox">
-        <h3>Movements</h3>
-        <div class="hint">Suggested first when you log this type. Renaming one here also renames it in your past ${esc(t ? t.name : '')} workouts.</div>
-        <div id="tMoves" class="form" style="gap:6px"></div>
-        <button type="button" class="mini-btn" id="tAddMove">+ Add movement</button>
-      </div>
-      <label class="check"><input type="checkbox" id="tHidden" ${t && t.hidden ? 'checked' : ''}> Hide from the list when logging a workout</label>
-      <button class="btn" type="submit">${t ? 'Save' : 'Add type'}</button>
-      ${t ? (used ? `<p class="hint" style="margin:0">Types with workouts can't be deleted — hide it instead.</p>` : `<button type="button" class="btn danger" id="tDel">Delete type</button>`) : ''}
-      <button type="button" class="btn secondary" id="tBack">‹ Back to workout types</button>
+$('#catsBtn').addEventListener('click', catsSheet);
+function catSheet(id) {
+  const c = id ? state.categories.find((x) => x.id === id) : null;
+  const used = c ? state.activities.filter((a) => a.catId === c.id).length : 0;
+  let icon = c ? c.icon : '💪', color = c ? c.color : COLORS[state.categories.length % COLORS.length];
+  openSheet(c ? 'Edit category' : 'New category', `<form class="form" id="cForm" novalidate>
+      <label>Name <input id="cName" value="${esc(c ? c.name : '')}" placeholder="e.g. Hyrox" autocomplete="off"></label>
+      <div><div class="label-t">Icon</div><div class="chips" id="cIcons">${ICONS.map((x) => `<button type="button" class="chip${x === icon ? ' on' : ''}" data-icon="${x}">${x}</button>`).join('')}</div></div>
+      <div><div class="label-t">Colour</div><div class="chips" id="cColors">${COLORS.map((x) => `<button type="button" class="swatch${x === color ? ' on' : ''}" data-color="${x}" style="background:${x}" aria-label="Colour ${x}"></button>`).join('')}</div></div>
+      <label>Words in an activity's name <span class="hint">separated by commas</span>
+        <textarea id="cWords" rows="2" placeholder="e.g. hyrox, sled">${esc(c ? (c.words || []).join(', ') : '')}</textarea></label>
+      <button class="btn" type="submit">Save</button>
+      ${c && c.id !== 'other' ? `<button type="button" class="btn danger" id="cDel">Delete${used ? ` (${used} session${used > 1 ? 's' : ''} move to Other)` : ''}</button>` : ''}
+      <button type="button" class="btn secondary" id="cBack">Back</button>
     </form>`);
-  const setKind = (k) => {
-    kind = k;
-    $$('#tKinds button').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
-    $('#tPaceWrap').classList.toggle('hidden', k !== 'cardio');
-    $('#tMovesBox').classList.toggle('hidden', k !== 'strength');
-  };
-  $$('#tKinds button').forEach((b) => b.addEventListener('click', () => setKind(b.dataset.k)));
-  $$('[data-icon]').forEach((b) => b.addEventListener('click', () => { $('#tIcon').value = b.dataset.icon; }));
-  const addRow = (name) => {
-    const row = document.createElement('div');
-    row.className = 'move-row';
-    row.innerHTML = `<input class="tm" value="${esc(name || '')}" placeholder="Movement name" aria-label="Movement name" autocomplete="off">
-      <button type="button" class="x-btn" aria-label="Remove movement">✕</button>`;
-    if (name) $('.tm', row).dataset.orig = name;
-    $('.x-btn', row).addEventListener('click', () => row.remove());
-    $('#tMoves').appendChild(row);
-    return row;
-  };
-  for (const n of (t && t.movements) || []) addRow(n);
-  $('#tAddMove').addEventListener('click', () => $('.tm', addRow()).focus());
-  setKind(kind);
-  $('#tBack').addEventListener('click', typesSheet);
-
-  $('#tForm').addEventListener('submit', async (e) => {
+  $$('[data-icon]').forEach((b) => b.addEventListener('click', () => { icon = b.dataset.icon; $$('[data-icon]').forEach((x) => x.classList.toggle('on', x === b)); }));
+  $$('[data-color]').forEach((b) => b.addEventListener('click', () => { color = b.dataset.color; $$('[data-color]').forEach((x) => x.classList.toggle('on', x === b)); }));
+  $('#cBack').addEventListener('click', catsSheet);
+  $('#cForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const name = $('#tName').value.trim().replace(/\s+/g, ' ');
-    if (!name) return toast('Give the type a name');
-    const twin = state.workoutTypes.find((x) => x !== t && sameName(x.name, name));
-    if (twin) return toast(`There's already a type called ${twin.name}`);
-    const icon = $('#tIcon').value.trim() || '💪';
-    // Movements: drop empty rows and repeats; renamed ones are renamed in this type's workouts too.
-    const movements = [], renames = [];
-    for (const i of $$('#tMoves .tm')) {
-      const n = i.value.trim().replace(/\s+/g, ' ');
-      if (!n || movements.some((m) => sameName(m, n))) continue;
-      movements.push(n);
-      if (i.dataset.orig && i.dataset.orig !== n) renames.push([i.dataset.orig, n]);
-    }
-    const entry = t || { id: uid() };
-    Object.assign(entry, { name, icon, kind, pace: kind === 'cardio' ? $('#tPace').value : (t && t.pace) || 'km',
-      movements: kind === 'strength' ? movements : (t && t.movements) || [], hidden: $('#tHidden').checked });
-    if (!t) state.workoutTypes.push(entry);
-    for (const w of workoutsOfType(entry.id)) {
-      w.type = name;
-      for (const m of w.movements || []) { const r = renames.find(([o]) => sameName(o, m.name)); if (r) m.name = r[1]; }
-    }
-    await save();
-    render();
-    toast(t ? 'Saved' : `${name} added`);
-    typesSheet();
+    const name = $('#cName').value.trim();
+    if (!name) return toast('Give it a name');
+    if (state.categories.some((x) => x !== c && sameName(x.name, name))) return toast('There is already a category with that name');
+    const words = [...new Set($('#cWords').value.split(',').map((w) => w.trim().toLowerCase()).filter(Boolean))];
+    if (c) Object.assign(c, { name, icon, color, words });
+    else state.categories.push({ id: uid(), name, icon, color, words });
+    await save(); render(); catsSheet();
   });
-  if (t && !used) $('#tDel').addEventListener('click', async () => {
-    if (!confirm(`Delete the workout type ${t.name}?`)) return;
-    state.workoutTypes = state.workoutTypes.filter((x) => x !== t);
-    await save();
-    typesSheet();
+  if ($('#cDel')) $('#cDel').addEventListener('click', async () => {
+    if (!confirm(`Delete ${c.name}?${used ? ` Its ${used} session${used > 1 ? 's' : ''} will show as Other.` : ''}`)) return;
+    for (const a of state.activities) if (a.catId === c.id) a.catId = 'other';
+    for (const [k, v] of Object.entries(state.nameCats)) if (v === c.id) delete state.nameCats[k];
+    state.categories = state.categories.filter((x) => x !== c);
+    await save(); render(); catsSheet();
   });
 }
 

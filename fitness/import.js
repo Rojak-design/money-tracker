@@ -1,20 +1,14 @@
-/* Fitness — filling in a workout or a day's recovery from screenshots (Garmin Connect, Whoop, WodUp).
+/* Fitness — reading screenshots (Garmin Connect, Whoop) to fill in the calendar and a day's recovery.
 
    Everything happens on this phone: the screenshots are read with the same bundled reader as the money tracker
    (Tesseract.js in ../money/ocr, loaded the first time it's needed) and are never saved. Several screenshots can be
-   picked at once (e.g. a Garmin activity that needs scrolling); what they show is put together. The numbers then
-   open in the usual form with the screenshots above it, to check and fix before saving.
+   picked at once; what they show is put together and opens in a form to check before saving.
 
    What is read:
-     Garmin Connect  activity Intervals / Laps tab   reps (time, distance, pace), rests, warm-up / cool-down, totals
-                     Strength Training exercises       sets: movement, reps, kg ("Body" = no weight)
+     Garmin Connect  All Activities list               each activity's name, date and time → the calendar
                      At a Glance and other day pages   resting heart rate, HRV, Body Battery, sleep score
-                     activity Overview / Stats         distance, time, average pace, average heart rate, calories
      Whoop           recovery, strain and sleep pages  recovery %, HRV, resting heart rate, sleep performance,
-                                                       strain, hours of sleep; a workout's average heart rate, calories
-     WodUp           the day's workout: movements with reps / sets / kg (weights you can add), text as notes
-   Stats can come from a different app than the workout (e.g. a WodUp workout + Garmin's average heart rate and
-   calories): picked together, or added later with "Add numbers from screenshots" in the workout's form. */
+                                                       strain, hours of sleep */
 'use strict';
 
 /* ---------- Reading the text in a screenshot ---------- */
@@ -135,35 +129,6 @@ function firstNumber(s, asHours) {
 // An icon read as a digit touches it ("»~7 Warm Up"); a real number has a space before it ("® 4 sets of 3 reps").
 const cleanLine = (s) => s.replace(/^[^A-Za-z0-9\s]+\s+(?=[A-Z][0-9]?[.,)]\s)/, '').replace(/^[^A-Za-z0-9\s(+@-]+\d?\s*(?=[A-Za-z]|\d+\s+(?:alternating|sets|rounds))/, '').replace(/^[^A-Za-z0-9(+@-]+/, '')
   .replace(/^([A-Z])[lI|]([.)])/, '$11$2').replace(/\bIRM\b/g, '1RM').replace(/\s+[@®©]$/, '').replace(/\s+/g, ' ').trim();
-const sentenceCase = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-// A movement name as you call it: renamed before (see importAliases), or one you already have (also matching
-// "Back Squats" with "Back squat"), or as read.
-function ownMoveName(read, t) {
-  const aliases = state.importAliases || {};
-  if (aliases[read.toLowerCase()]) return aliases[read.toLowerCase()];
-  const single = read.replace(/s$/i, '');
-  const known = ((t && t.movements) || []).concat(allMoveNames());
-  return known.find((n) => sameName(n, read)) || known.find((n) => sameName(n, single)) || read;
-}
-// The workout type for an activity found in a screenshot, as you've set them up.
-function findType(key) {
-  const names = { run: ['Run', 'Running'], cycle: ['Cycle', 'Cycling', 'Ride', 'Bike'], swim: ['Swim', 'Swimming'], walk: ['Walk', 'Walking'],
-    hike: ['Hike', 'Hiking'], strength: ['Strength', 'Strength Training'], crossfit: ['CrossFit'] }[key] || [key];
-  const ts = state.workoutTypes;
-  return ts.find((t) => t.id === key) || ts.find((t) => names.some((n) => sameName(n, t.name))) ||
-    ts.find((t) => t.kind === (key === 'strength' || key === 'crossfit' ? 'strength' : 'cardio')) || ts[0];
-}
-function activityKey(text) {
-  const head = text.split('\n').slice(0, 8).join(' ');
-  if (/strength\s*training/i.test(head)) return 'strength';
-  if (/crossfit/i.test(text)) return 'crossfit';
-  if (/\b(running|run|treadmill|trail)\b/i.test(head)) return 'run';
-  if (/\b(cycling|biking|ride|bike|spin)\b/i.test(head)) return 'cycle';
-  if (/\b(swim|swimming|pool)\b/i.test(head)) return 'swim';
-  if (/\b(walking|walk)\b/i.test(head)) return 'walk';
-  if (/\b(hiking|hike)\b/i.test(head)) return 'hike';
-  return null;
-}
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 // A date written in a workout screenshot ("Thu, Nov 13", "13 Nov 2026", "November 13, 2026", "Yesterday").
 function findDate(text) {
@@ -181,264 +146,45 @@ function findDate(text) {
   return isoDay(new Date(year, month, day));
 }
 
-/* ---------- What kind of screenshot is it? ---------- */
-const LAP_ROW = /(\d{1,2}(?::\d{2}){1,2}(?:[.,]\d)?)\s+(\d{1,4}(?:[.,]\d{1,2})?)\s+(\d{1,2}:\d{2}(?:[.,]\d)?|\d{1,3}[.,]\d)\s*$/;
-const SET_ROW = /^\D{0,3}?(\d{1,2})\s+(.+?)\s+(\d{1,2}:?\d{2})\s+(\d{1,3})\s+(\d{1,3}(?:[.,]\d)?|Body|BW)\b/i;
-const STATS = /\b(?:avg|average)\.?\s*(?:hr|heart rate)\b|\bcalories\b|\bkcal\b/i;
-function detect(shot) {
-  const t = shot.text;
-  // A Whoop workout (strain, average heart rate, calories) is workout stats, not the day's recovery.
-  if (/WH\W?OO\W?P/.test(t) && STATS.test(t) && !/RECOVERY|HEART RATE VARIABILITY/.test(t) && /\b(?:avg|average)\.?\s*(?:hr|heart)/i.test(t)) return 'garminActivity';
-  if (/WH\W?OO\W?P|HEART RATE VARIABILITY|SLEEP PERFORMANCE|DAY STRAIN|^\W*STRAIN\W*$/m.test(t)) return 'whoop';
-  if (shot.lines.filter((l) => SET_ROW.test(l.text)).length >= 2 || (/\bReps\b/i.test(t) && /\bWeight\b/i.test(t) && shot.lines.some((l) => SET_ROW.test(l.text)))) return 'garminStrength';
-  if (shot.lines.filter((l) => LAP_ROW.test(l.text)).length >= 2) return 'garminLaps';
-  if (/log\s*result|leaderboard|alternating sets|\bsets? of\b|rounds? (of|for)|\bAMRAP\b|\bEMOM\b|for time|time cap/i.test(t)) return 'wod';
-  if (/at a\s*glance|body battery|hrv status|\bresting\b|sleep score|training readiness|overnight hrv/i.test(t)) return 'garminDay';
-  if (/avg\.?\s*(pace|speed)|distance/i.test(t) || STATS.test(t)) return 'garminActivity';
-  return null;
-}
-
-/* ---------- Garmin: intervals / laps ---------- */
-function parseLaps(shot, acc) {
-  let lastRep = acc.maxRep || 0;
-  for (const l of shot.lines) {
-    const m = l.text.match(LAP_ROW);
-    if (!m) continue;
-    const prefix = l.text.slice(0, m.index);
-    const time = clockSec(m[1]), dist = toNum(m[2]), third = m[3];
-    if (time == null || dist == null) continue;
-    const row = { timeSec: time, dist, third };
-    if (/total/i.test(prefix) || /^\W*T\w{0,2}al\b/i.test(prefix)) { acc.total = row; continue; }
-    if (/\brest\b|recover/i.test(prefix)) { acc.rows['rest' + lastRep + ':' + time] = Object.assign(row, { kind: 'rest', after: lastRep }); continue; }
-    const n = prefix.match(/(?:^|\s)(\d{1,3})\s+[A-Za-z]/);
-    if (n) {
-      lastRep = +n[1];
-      acc.maxRep = Math.max(acc.maxRep || 0, lastRep);
-      acc.rows['r' + lastRep] = Object.assign(row, { kind: 'rep', n: lastRep });
-    } else {
-      const label = /warm/i.test(prefix) ? 'Warm-up' : /cool|cod|down/i.test(prefix) ? 'Cool-down' : 'Other';
-      acc.rows['x' + label + time] = Object.assign(row, { kind: 'extra', label });
-    }
-  }
-}
-function lapsToCardio(acc, t) {
-  const how = t.pace;
-  const km = (d) => (how === '100m' && d >= 25 && Number.isInteger(d) ? d / 1000 : d);
-  const pace = (third, d, time) => {
-    if (/:/.test(third)) { const s = clockSec(third.replace(/[.,]\d$/, '')); return s ? (how === '100m' ? s * 10 : s) : null; }
-    const v = toNum(third);
-    if (how === 'speed' && v > 0) return 3600 / v;
-    return d > 0 ? time / d : null;
-  };
-  const rows = Object.values(acc.rows);
-  const reps = rows.filter((r) => r.kind === 'rep').sort((p, q) => p.n - q.n);
-  const rests = rows.filter((r) => r.kind === 'rest');
-  const intervals = reps.map((r) => {
-    const d = km(r.dist);
-    const rest = rests.find((x) => x.after === r.n);
-    return { distanceKm: round(d, 3), timeSec: Math.round(r.timeSec), paceSecPerKm: Math.round(pace(r.third, d, r.timeSec) || r.timeSec / d), restSec: rest ? Math.round(rest.timeSec) : null };
-  });
-  // Totals: Garmin's Total row when it could be read, otherwise every row added up.
-  let timeSec = rows.reduce((n, r) => n + r.timeSec, 0), distanceKm = rows.reduce((n, r) => n + km(r.dist), 0);
-  if (acc.total && acc.total.timeSec >= timeSec * 0.9 && km(acc.total.dist) >= distanceKm * 0.9) { timeSec = acc.total.timeSec; distanceKm = km(acc.total.dist); }
-  const counts = {};
-  for (const r of reps) counts[r.dist] = (counts[r.dist] || 0) + 1;
-  const [modeDist, modeCount] = Object.entries(counts).sort((p, q) => q[1] - p[1])[0] || [0, 0];
-  const structured = rows.some((r) => r.kind !== 'rep') || (reps.length >= 3 && modeCount >= reps.length * 0.6 && km(+modeDist) <= 2);
-  timeSec = Math.round(timeSec);
-  return { distanceKm: round(distanceKm, 3), timeSec, paceSecPerKm: distanceKm > 0 ? Math.round(timeSec / distanceKm) : null, intervals, structured,
-    parts: { reps: reps.length, rests: rests.length, extras: rows.filter((r) => r.kind === 'extra').map((r) => r.label) } };
-}
-
-/* ---------- Garmin: strength sets ---------- */
-function parseSets(shot, acc) {
-  const lbs = /weight\s*\n?\s*lbs?\b/i.test(shot.text);
-  let prev = null;
-  for (const l of shot.lines) {
-    const m = l.text.match(SET_ROW);
-    if (m) {
-      const nameWord = l.words[1] || l.words[0];
-      const w = /body|bw/i.test(m[5]) ? null : toNum(m[5]);
-      prev = acc.sets[+m[1]] = { n: +m[1], name: m[2].replace(/\s+/g, ' ').trim(), reps: +m[4], weightKg: w == null ? null : round(lbs ? w * 0.45359 : w, 1), x0: nameWord.x0, y1: l.y1, h: l.y1 - l.y0 };
-      continue;
-    }
-    // A long name wraps onto the next line, starting under the name ("Barbell Reverse" / "Lunge").
-    if (prev && /^[A-Za-z][A-Za-z' -]{1,30}$/.test(l.text) && l.text.split(' ').length <= 3 && Math.abs(l.x0 - prev.x0) < shot.W * 0.05 && l.y0 - prev.y1 < prev.h * 3) {
-      prev.name += ' ' + l.text.trim();
-      prev = null;
-    }
-  }
-}
-function setsToMovements(acc, t) {
-  const order = [], byName = {};
-  for (const s of Object.values(acc.sets).sort((p, q) => p.n - q.n)) {
-    const key = s.name.toLowerCase();
-    if (!byName[key]) { byName[key] = { importedName: s.name, name: ownMoveName(s.name, t), restSec: null, sets: [], first: s.n, last: s.n }; order.push(byName[key]); }
-    byName[key].sets.push({ reps: s.reps, weightKg: s.weightKg });
-    byName[key].last = s.n;
-  }
-  // Movements whose sets alternate (one's sets fall between the other's) were done round by round.
-  let g = 0;
-  for (let i = 0; i < order.length; i++) for (let j = i + 1; j < order.length; j++) {
-    const a = order[i], b = order[j];
-    if (b.first < a.last && a.first < b.last) { const id = a.group || b.group || 'g' + ++g; a.group = b.group = id; }
-  }
-  return order.map(({ first, last, ...m }) => Object.assign(m, { group: m.group || null }));
-}
-
-/* ---------- WodUp workouts ---------- */
-// Lines that are instructions or app buttons, not movements (kept out of the notes too where they're buttons).
-const WOD_SKIP = /^(log\s*result|leaderboard|view warm ?up|warm ?up|show (less|more)|scoring|comments?|like|reply|view all|liked by|share|save)\b/i;
-const NOT_MOVE = /^(rest|sets?|rounds?|reps?|minutes?|mins?|seconds?|secs?|for time|time cap|cap|every|then|each|with|build|scoring|score|notes?|tempo|rpe|and|or|of|at|in|on|the|a|an|total|weeks?|day|warm|cool|metcon|wod|skill|accessory|finisher|conditioning|strength|part|ascending|descending|ladder|pause|find)\b/i;
-const KG = /(\d+(?:[.,]\d+)?)\s*(kgs?|lbs?|#)(?![a-z])/i;
-// A movement name as written: letters (and - ' /), 2–6 words, not an instruction.
-function moveName(raw, maxWords = 6) {
-  const n = raw.replace(/\(.*?\)/g, '').replace(KG, '').replace(/\b\d+(?:[.,]\d+)?\s*\/\s*/g, '').replace(/@.*$/, '').replace(/[:;,.!]+$/, '').replace(/\s+/g, ' ').trim();
-  if (!/^[A-Za-z][A-Za-z' /-]{1,70}[A-Za-z]$/.test(n) || n.split(' ').length > maxWords || NOT_MOVE.test(n)) return null;
-  return n;
-}
-const kgOf = (raw) => { const m = raw.match(KG); if (!m) return null; const v = toNum(m[1]); return /lb|#/i.test(m[2]) ? round(v * 0.45359, 1) : v; };
-// The movements in some lines of text: [{ read, reps, sets, kg, scheme, group }]. Movements under one "5 rounds",
-// "5 alternating sets of" or "21-15-9" are done round by round (21 thrusters, 21 pull-ups, then 15 of each…): they
-// get the same `group`.
-function writtenMoves(lines) {
+/* ---------- Garmin Connect: All Activities list ---------- */
+// The line under an activity's name: "11 Nov @ 19:19", "9 Nov 2025 @ 18:40", "Today @ 07:05" (the @ is sometimes
+// read as ® or ©).
+const WHEN = /^(?:(\d{1,2})\s+([A-Za-z]{3,5})\.?(?:\s+(\d{4}))?|(today|yesterday))\s*[@®©Q]?\s*(\d{1,2})[:.](\d{2})\b/i;
+// Each activity: { date, time, name }. The name is the line above its date. Only the words lined up with the date
+// are kept: the activity's icon to their left is often read as letters ("ES Weightlifting"), and the duration or
+// distance is at the right ("44:34", "8.00 km").
+function parseActivityList(shot) {
   const out = [];
-  let sets = 1, scheme = null, block = 0, circuit = false;
-  const push = (mv) => out.push(Object.assign({ blockAt: block }, mv, { inRounds: !!(scheme || sets > 1 || circuit) && !(mv.sets > 1 && mv.reps && !scheme && mv.sets !== sets) }));
-  // A heading that names the movement ("A. Segmented Clean Pull", "B. Power Clean + Clean"), waiting for the line
-  // with its sets and reps ("4 sets of 3 reps", "6 sets of @ 80%"). It may wrap onto the next line.
-  let heading = null, headingOpen = false;
-  for (const raw0 of lines) {
-    if (!raw0 || WOD_SKIP.test(raw0) || /^[+#]/.test(raw0)) { headingOpen = false; continue; }
-    let m = raw0.match(/^(\d{1,2})\s+(?:sets|rounds)\s+of\s*(?:(\d{1,3})\s*(?:reps?|x)\b)?/i);
-    if (m && heading) {
-      // Each part of a complex ("Power Clean + Clean") is a movement, done together in every set.
-      const names = heading.split(/\s*\+\s*/).map((x) => moveName(x, 10)).filter(Boolean);
-      block++;
-      for (const n of names) out.push({ read: n, sets: +m[1], reps: m[2] ? +m[2] : null, kg: kgOf(raw0), blockAt: block, inRounds: names.length > 1 });
-      heading = null; headingOpen = false;
-      continue;
+  const L = shot.lines;
+  for (let i = 1; i < L.length; i++) {
+    const ws = L[i].words;
+    let k = 0, m = null;
+    for (; k < Math.min(3, ws.length); k++) if ((m = ws.slice(k).map((w) => w.text).join(' ').match(WHEN))) break;
+    if (!m) continue;
+    const date = m[4] ? findDate(m[4]) : findDate(`${m[1]} ${m[2]}${m[3] ? ' ' + m[3] : ''}`);
+    if (!date) continue;
+    const colX = ws[k].x0, h = L[i].y1 - L[i].y0;
+    // The nearest line above with words in the date's column.
+    let name = '';
+    for (let j = i - 1; j >= 0 && L[i].y0 - L[j].y1 < h * 4; j--) {
+      const words = L[j].words.filter((w) => w.x0 >= colX - h && w.x0 < shot.W * 0.72).map((w) => w.text);
+      name = cleanLine(words.join(' ')).replace(/\s+[\d:.,]+\s*(km|mi|m|kcal)?\s*$/i, '').trim();
+      if (/[A-Za-z]{2,}/.test(name)) break;
     }
-    const hd = raw0.match(/^[A-Z][0-9]?[.,)]\s+([A-Za-z][^0-9]*)$/);
-    if (hd && hd[1].split(/\s*\+\s*/).every((x) => moveName(x, 10))) { heading = hd[1].trim(); headingOpen = true; sets = 1; scheme = null; circuit = false; block++; continue; }
-    if (heading && headingOpen && /^[A-Za-z][A-Za-z' -]+$/.test(raw0) && moveName(heading + ' ' + raw0, 10)) { heading += ' ' + raw0; headingOpen = false; continue; }
-    headingOpen = false;
-    if (heading && /^rest\b/i.test(raw0)) continue;
-    // "5 rounds for time", "5 alternating sets of:", "3 rds"
-    m = raw0.match(/(\d+)\s+(?:alternating\s+)?(?:sets|rounds|rds)\b/i);
-    if (m && !/^\d+\s*x/i.test(raw0)) { sets = +m[1]; scheme = null; circuit = false; block++; continue; }
-    // "AMRAP 12 min", "EMOM 10", "For time:" — the movements below are done round by round.
-    if (/\b(AMRAP|EMOM|E\d+MOM)\b|^\W*for time\W*$/i.test(raw0) && !/^\d+\s+\w/.test(raw0)) { if (!scheme) { circuit = true; block++; } continue; }
-    // A new part ("B.", "Part 2", "Metcon") starts again with one set.
-    if (/^(?:[A-Z][.,)]|part\s+\d|metcon|strength|skill|accessory)(?:\s|$)/i.test(raw0) && !/^[A-Z][.,)]\s*\d/.test(raw0)) { sets = 1; scheme = null; circuit = false; block++; heading = null; }
-    // Leave out part labels and bullets: "A1.", "B)", "1.", "-", "•". Men's/women's numbers ("12/10 calories",
-    // "100/70 kg"): the second one is used, as for weights.
-    const raw = raw0.replace(/^(?:[A-Z][0-9]?[.)]|\d{1,2}[.)](?!\d)|[-•*–])\s*/, '').trim()
-      .replace(/\b\d+\s*\/\s*(\d+)(?=\s*(?:cal|cals|calories|kcal|m|meters?|metres?|k|km)\b)/i, '$1').replace(/\bcalories\b/i, 'cal')
-      // "1000 meters", "2k" -> "1000m", "2km"
-      .replace(/(\d)\s*(?:meters?|metres?)\b/gi, '$1m').replace(/(\d)k\b/gi, '$1km');
-    // "SkiErg 12/10 calories", "Row 15 cal"
-    m = raw.match(/^([A-Za-z][A-Za-z' -]+?)\s+(\d{1,4})\s*(?:cal|cals|kcal)\b/i);
-    if (m && moveName(m[1])) { push({ read: `${moveName(m[1])} (cal)`, reps: +m[2], sets: scheme ? 1 : sets, scheme: Array.isArray(scheme) ? scheme : null }); continue; }
-    // "21-15-9 thrusters, pull-ups" / "2-4-6-8-10-..." (a ladder: reps not known)
-    m = raw.match(/^(\d+(?:\s*[-–/]\s*\d+){2,})(\s*[-–]?\s*\.\.\.)?\s*(.*)$/);
-    if (m) {
-      scheme = m[2] ? 'ladder' : m[1].split(/\s*[-–/]\s*/).map(Number);
-      block++;
-      for (const part of m[3].split(/\s*(?:,|&|\band\b)\s*/)) { const n = moveName(part); if (n) push({ read: n, scheme, sets: 1 }); }
-      continue;
-    }
-    // "5x5 Back squat @ 80kg", "3 x 10 lunges"
-    m = raw.match(/^(\d{1,2})\s*[x×]\s*(\d{1,3})\s+(.+)$/i);
-    if (m && moveName(m[3])) { push({ read: moveName(m[3]), sets: +m[1], reps: +m[2], kg: kgOf(m[3]) }); continue; }
-    // "Back squat 5x5 @ 80kg", "Back squat: 3 x 10, 60kg"
-    m = raw.match(/^(.+?)[:\s]+(\d{1,2})\s*[x×]\s*(\d{1,3})\b(.*)$/i);
-    if (m && moveName(m[1])) { push({ read: moveName(m[1]), sets: +m[2], reps: +m[3], kg: kgOf(m[4]) }); continue; }
-    // "8 Back Squats @ 70%", "20 cal row", "400m run"
-    m = raw.match(/^(\d{1,4})\s*(m|km|cal|cals)?\s+(.+)$/i);
-    if (m && moveName(m[3])) {
-      const unit = m[2] && m[2].toLowerCase();
-      if (unit === 'm' || unit === 'km') push({ read: `${moveName(m[3])} ${m[1]} ${unit}`, sets, kg: kgOf(m[3]) });
-      else push({ read: unit ? `${moveName(m[3])} (cal)` : moveName(m[3]), reps: +m[1], sets: scheme ? 1 : sets, scheme: Array.isArray(scheme) ? scheme : null, kg: kgOf(m[3]) });
-      continue;
-    }
-    // "Back squat x 8"
-    m = raw.match(/^(.+?)\s*[x×]\s*(\d{1,3})\b(.*)$/i);
-    if (m && moveName(m[1])) { push({ read: moveName(m[1]), reps: +m[2], sets, kg: kgOf(m[3]) }); continue; }
-    // "Run 400m", "Row 1000 m"
-    m = raw.match(/^(.+?)\s+(\d{1,5}(?:[.,]\d+)?)\s*(m|km)\b/i);
-    if (m && moveName(m[1])) { push({ read: `${moveName(m[1])} ${m[2]} ${m[3].toLowerCase()}`, sets }); continue; }
-    // A bullet with just a movement ("- Burpee over the dumbbell"), or a movement under a rep scheme ("21-15-9" then
-    // "Thrusters", "Pull-ups").
-    if (((raw !== raw0 && /^[-•*–]/.test(raw0)) || Array.isArray(scheme)) && moveName(raw)) push({ read: moveName(raw), sets: scheme ? 1 : sets, scheme: Array.isArray(scheme) ? scheme : null });
+    if (!/[A-Za-z]{2,}/.test(name) || WHEN.test(name) || /\bactivities\b|^search$/i.test(name)) continue;
+    out.push({ date, time: `${pad(+m[5])}:${m[6]}`, name });
   }
-  // Round by round: movements pushed while rounds or a rep scheme applied, two or more under the same one.
-  const n = {};
-  for (const mv of out) if (mv.blockAt != null && mv.inRounds) n[mv.blockAt] = (n[mv.blockAt] || 0) + 1;
-  for (const mv of out) { mv.group = mv.inRounds && n[mv.blockAt] > 1 ? 'w' + mv.blockAt : null; delete mv.block; delete mv.blockAt; delete mv.inRounds; }
   return out;
 }
-function parseWod(shot, acc) {
-  const lines = shot.lines.map((l) => cleanLine(l.text)).filter(Boolean);
-  const keep = [];
-  for (const raw of lines) {
-    if (/show (less|more)/i.test(raw)) break;
-    if (!acc.title && /crossfit|training|wod/i.test(raw) && raw.length < 60 && !/\d+\s*(x|rounds|sets)/i.test(raw)) { acc.title = raw.replace(/^\W*\w{1,2}\s+(?=[A-Z])/, ''); continue; }
-    if (/log\s*result|leaderboard/i.test(raw)) continue;
-    if (/^\d{1,2}:\d{2}\b/.test(raw) && keep.length === 0) continue; // the phone's clock at the top
-    keep.push(raw);
-  }
-  // Round-by-round groups are per screenshot.
-  acc.shots = (acc.shots || 0) + 1;
-  if (!acc.typeId) {
-    const named = keep.slice(0, 4).join(' ');
-    const t = state.workoutTypes.find((x) => x.id !== 'crossfit' && x.kind === 'strength' && new RegExp(`\\b${x.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(named));
-    if (t) acc.typeId = t.id;
-  }
-  acc.moves.push(...writtenMoves(keep).map((mv) => Object.assign(mv, { group: mv.group ? `${mv.group}-${acc.shots}` : null })));
-  // Notes: the workout's own lines (not buttons, nor bits of the phone's screen like "Il @)").
-  acc.notes.push(...keep.filter((x) => !WOD_SKIP.test(x) && (/[A-Za-z]{3,}/.test(x) || /\d.*\d/.test(x))));
-  if (/\b(AMRAP|EMOM|for time|rounds|WOD|metcon|crossfit)\b/i.test(shot.text)) acc.crossfit = true;
-}
-function wodToMovements(acc, t) {
-  return acc.moves.map((mv) => {
-    let read = sentenceCase(mv.read.replace(/\s+/g, ' ')), unit = null, metres = null;
-    const cal = read.match(/^(.*?)\s*\(cal\)$/i);
-    if (cal) { read = cal[1]; unit = 'cal'; }
-    const dist = read.match(/^(.*?)\s+(\d+(?:[.,]\d+)?)\s*(m|km)$/i);
-    if (dist) { read = dist[1]; unit = 'm'; metres = Math.round(toNum(dist[2]) * (dist[3].toLowerCase() === 'km' ? 1000 : 1)); }
-    const sets = Array.isArray(mv.scheme) ? mv.scheme.map((r) => ({ reps: r, weightKg: mv.kg || null }))
-      : Array.from({ length: Math.max(1, Math.min(mv.sets || 1, 30)) }, () => ({ reps: metres || mv.reps || null, weightKg: unit ? null : mv.kg || null }));
-    if (!unit && CAL_MACHINE.test(read) && !mv.kg) unit = 'cal';
-    return Object.assign({ importedName: read, name: ownMoveName(read, t), restSec: null, sets, group: mv.group || null }, unit ? { unit } : {});
-  });
-}
 
-/* ---------- Activity summary numbers (Garmin Overview / Stats) ---------- */
-// A number shown by a label: on the same line after it, or just below it.
-function labelNumber(shot, re, opts = {}) {
-  for (let i = 0; i < shot.lines.length; i++) {
-    const l = shot.lines[i], m = l.text.match(re);
-    if (!m) continue;
-    const after = l.text.slice(m.index + m[0].length);
-    const pick = (s) => (opts.time ? (s.match(/\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d)?/) || [])[0] : ((s.match(/\d{1,3}(?:,\d{3})+(?!\d)|\d+(?:[.,]\d+)?/) || [])[0] || '').replace(/,(?=\d{3}\b)/g, '') || null);
-    let v = pick(after);
-    if (!v && shot.lines[i + 1] && shot.lines[i + 1].y0 - l.y1 < (l.y1 - l.y0) * 2.5) v = pick(shot.lines[i + 1].text);
-    if (v) { if (!opts.time) return toNum(v); const t = clockSec(opts.pace ? v.replace(/[.,]\d$/, '') : v); return t == null ? null : Math.round(t); }
-  }
+/* ---------- What kind of screenshot is it? ---------- */
+function detect(shot) {
+  const t = shot.text;
+  if (/WH\W?OO\W?P|HEART RATE VARIABILITY|SLEEP PERFORMANCE|DAY STRAIN|^\W*STRAIN\W*$/m.test(t)) return 'whoop';
+  shot.acts = parseActivityList(shot);
+  if (shot.acts.length) return 'garminList';
+  if (/at a\s*glance|body battery|hrv status|\bresting\b|sleep score|training readiness|overnight hrv/i.test(t)) return 'garminDay';
   return null;
-}
-function parseActivity(shot, acc) {
-  const d = labelNumber(shot, /\bdistance\b/i);
-  if (d != null && acc.distanceKm == null) acc.distanceKm = d;
-  const tm = labelNumber(shot, /\b(?:total |moving |elapsed )?time\b(?!\s*(?:in|cap))/i, { time: true });
-  if (tm != null && acc.timeSec == null) acc.timeSec = tm;
-  const pace = labelNumber(shot, /\bavg\.?\s*pace\b/i, { time: true, pace: true });
-  if (pace != null && acc.paceSecPerKm == null) acc.paceSecPerKm = pace;
-  const hr = labelNumber(shot, /\b(?:avg|average)\.?\s*(?:hr|heart rate)\b/i);
-  if (hr != null && hr >= 40 && hr <= 230 && acc.avgHr == null) acc.avgHr = Math.round(hr);
-  const cal = labelNumber(shot, /\btotal calories\b/i) ?? labelNumber(shot, /\b(?:active )?calories\b|\bkcal\b/i);
-  if (cal != null && cal > 0 && cal < 10000 && acc.calories == null) acc.calories = Math.round(cal);
 }
 
 /* ---------- Recovery: Whoop ---------- */
@@ -563,8 +309,7 @@ document.body.appendChild(fileInput);
 $$('[data-import]').forEach((b) => b.addEventListener('click', () => { fileInput.value = ''; fileInput.click(); }));
 fileInput.addEventListener('change', () => { if (fileInput.files.length) importShots([...fileInput.files]); });
 
-const KIND_NAMES = { garminLaps: 'Garmin intervals', garminStrength: 'Garmin strength', garminActivity: 'Garmin activity', garminDay: 'Garmin day',
-  whoop: 'Whoop', wod: 'WodUp' };
+const KIND_NAMES = { garminList: 'Garmin activities', garminDay: 'Garmin day', whoop: 'Whoop' };
 
 async function importShots(files) {
   for (const u of lastUrls) URL.revokeObjectURL(u);
@@ -597,72 +342,21 @@ async function importShots(files) {
   await review(shots);
 }
 
-// Puts together what the screenshots show and opens the forms to check it: the workout first, then recovery.
+// Puts together what the screenshots show and opens the forms to check it: activities first, then recovery.
 async function review(shots) {
-  const thumbs = (list) => `<div class="shots">${list.map((s, i) => `<img src="${s.url}" alt="Screenshot ${i + 1}" data-shot>`).join('')}</div><div class="shot-view"></div>`;
-  const workoutShots = shots.filter((s) => /^garmin(Laps|Strength|Activity)$|^wod$/.test(s.kind));
+  const listShots = shots.filter((s) => s.kind === 'garminList');
   const dayShots = shots.filter((s) => s.kind === 'whoop' || s.kind === 'garminDay');
   const steps = [];
 
-  if (workoutShots.length) {
-    const text = workoutShots.map((s) => s.text).join('\n');
-    const kinds = new Set(workoutShots.map((s) => s.kind));
-    const wodFirst = { moves: [], notes: [] };
-    for (const s of workoutShots) if (s.kind === 'wod') parseWod(s, wodFirst);
-    const key = kinds.has('garminStrength') ? 'strength' : kinds.has('wod') ? (wodFirst.crossfit ? 'crossfit' : activityKey(text) === 'crossfit' ? 'crossfit' : 'strength') : activityKey(text) || 'run';
-    const t = (wodFirst.typeId && state.workoutTypes.find((x) => x.id === wodFirst.typeId)) || findType(key);
-    const draft = { typeId: t.id, type: t.name, kind: t.kind, date: findDate(text), notes: '', durationMin: null, avgHr: null, calories: null };
-    const tips = [];
-    let laps = null;
-    const laps0 = { rows: {} }, sets0 = { sets: {} }, wod0 = wodFirst, act0 = {};
-    for (const s of workoutShots) {
-      if (s.kind === 'garminLaps') parseLaps(s, laps0);
-      if (s.kind === 'garminStrength') parseSets(s, sets0);
-      if (s.kind !== 'wod') parseActivity(s, act0);
+  if (listShots.length) {
+    // Overlapping screenshots of the list: each activity once.
+    const seen = new Set(), rows = [];
+    for (const s of listShots) for (const r of s.acts) {
+      const k = `${r.date} ${r.time} ${r.name.toLowerCase()}`;
+      if (!seen.has(k)) { seen.add(k); rows.push(r); }
     }
-    // Average heart rate and calories, from whichever app shows them.
-    draft.avgHr = act0.avgHr != null ? act0.avgHr : null;
-    draft.calories = act0.calories != null ? act0.calories : null;
-    if (t.kind === 'cardio') {
-      const c = Object.keys(laps0.rows).length ? lapsToCardio(laps0, t) : null;
-      draft.cardio = { distanceKm: act0.distanceKm != null ? act0.distanceKm : c ? c.distanceKm : null,
-        timeSec: act0.timeSec != null ? act0.timeSec : c ? c.timeSec : null, paceSecPerKm: act0.paceSecPerKm != null ? act0.paceSecPerKm : c ? c.paceSecPerKm : null };
-      if (c && c.structured) {
-        draft.cardio.intervals = c.intervals;
-        tips.push(`Read ${c.parts.reps} reps${c.parts.rests ? ` and ${c.parts.rests} rest${c.parts.rests > 1 ? 's' : ''}` : ''}${c.parts.extras.length ? ` (plus ${c.parts.extras.join(' and ').toLowerCase()} in the totals)` : ''}. Check every rep was in your screenshots.`);
-      } else if (c && c.intervals.length > 1) {
-        laps = c.intervals;
-        tips.push(`Garmin split this into ${laps.length} laps. They're in the totals; add them as intervals only if they were intervals.`);
-      }
-      if (c && !c.structured && !c.intervals.length) tips.push('No laps found.');
-    } else if (t.kind === 'strength') {
-      draft.movements = Object.keys(sets0.sets).length ? setsToMovements(sets0, t) : wodToMovements(wod0, t);
-      const n = draft.movements.reduce((x, m) => x + m.sets.length, 0);
-      if (kinds.has('garminStrength')) tips.push(`Read ${n} sets in ${draft.movements.length} movements. Check every set was in your screenshots. Rename a movement and it'll be called that next time.`);
-      if (kinds.has('wod')) {
-        draft.notes = [wod0.title, ...wod0.notes].filter(Boolean).join('\n');
-        tips.push('From WodUp: check the movements, and fill in the weights you used (and reps where it says a ladder or AMRAP). The full text is in the notes.');
-      }
-    }
-    if (draft.avgHr || draft.calories) tips.push(`Read ${[draft.avgHr ? `average heart rate ${draft.avgHr}` : '', draft.calories ? `${draft.calories} calories` : ''].filter(Boolean).join(' and ')}.`);
-    else tips.push('No average heart rate or calories on these screens — add a Garmin or Whoop screenshot of this workout, now or later with "Add numbers from screenshots" in the form.');
-    if (!draft.date) tips.push('These screens don\'t show the date — check it.');
-    // Only offer the workout if something was actually read.
-    const c = draft.cardio || {};
-    const found = (draft.movements && draft.movements.some((m) => m.name)) || c.distanceKm != null || c.timeSec != null || (c.intervals && c.intervals.length) || laps;
-    const sources = [...kinds].map((k) => KIND_NAMES[k]).join(' + ');
-    if (found) steps.push(() => workoutSheet(null, draft, {
-      source: kinds.has('wod') ? 'WodUp' : 'Garmin',
-      banner: `<div class="import-banner"><div>📷 <strong>Read from ${workoutShots.length} screenshot${workoutShots.length > 1 ? 's' : ''}</strong> (${esc(sources)}). Check the numbers against your screenshots — tap one to see it bigger. Nothing is saved until you tap Save.</div>
-        ${tips.map((x) => `<div>• ${esc(x)}</div>`).join('')}
-        ${laps ? `<button type="button" class="mini-btn" id="lapsBtn">Add the ${laps.length} laps as intervals</button>` : ''}
-        ${thumbs(workoutShots)}</div>`,
-      bind: ({ addRep }) => {
-        const b = $('#lapsBtn');
-        if (b) b.addEventListener('click', () => { for (const r of laps) addRep(r); b.remove(); });
-      },
-      onDone: () => { show('workouts'); next(); }
-    }));
+    rows.sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+    steps.push(() => activitiesSheet(rows, listShots, next));
   }
 
   if (dayShots.length) {
@@ -698,14 +392,49 @@ async function review(shots) {
 
   if (!steps.length) {
     openSheet('Nothing found', `<div class="form">
-      <p style="margin:0">No workout or recovery numbers could be found in ${shots.length > 1 ? 'these screenshots' : 'this screenshot'}.</p>
-      <p class="muted small" style="margin:0">Screens that work: Garmin Connect activity <strong>Intervals</strong> / <strong>Laps</strong>, <strong>Stats</strong> and <strong>Strength</strong> exercise lists, Garmin <strong>At a Glance</strong>, Whoop <strong>recovery</strong> and <strong>strain</strong>, and <strong>WodUp</strong> workouts. For anything else, add the workout with <strong>+</strong>.</p>
+      <p style="margin:0">Nothing could be read from ${shots.length > 1 ? 'these screenshots' : 'this screenshot'}.</p>
+      <p class="muted small" style="margin:0">Screens that work: Garmin Connect <strong>All Activities</strong> (for the calendar), Garmin <strong>At a Glance</strong>, and Whoop <strong>recovery</strong>, <strong>sleep</strong> and <strong>strain</strong>.</p>
       ${shots.length ? thumbs(shots) : ''}
       <button type="button" class="btn secondary" data-close>Close</button></div>`);
     return;
   }
   function next() { const step = steps.shift(); if (step) step(); }
   next();
+}
+const thumbs = (list) => `<div class="shots">${list.map((s, i) => `<img src="${s.url}" alt="Screenshot ${i + 1}" data-shot>`).join('')}</div><div class="shot-view"></div>`;
+
+// The activities read, each with its category to check. Ones already on the calendar are unticked.
+function activitiesSheet(rows, shots, next) {
+  const dup = (r) => state.activities.find((a) => a.date === r.date && (a.time ? a.time === r.time : sameName(a.name, r.name)));
+  openSheet('Check imported activities', `<form class="form" id="iForm" novalidate>
+      <div class="import-banner"><div>📷 <strong>Read ${rows.length} activit${rows.length > 1 ? 'ies' : 'y'}</strong> from ${shots.length} screenshot${shots.length > 1 ? 's' : ''}. Check each category — it's what shows on the calendar. Change the category for a name and that name gets it next time too. Nothing is saved until you tap Save.</div>
+        ${thumbs(shots)}</div>
+      <div class="imp-list">${rows.map((r, i) => { const d = dup(r); return `<div class="imp-row${d ? ' dup' : ''}" data-i="${i}">
+        <label class="check"><input type="checkbox" class="ion" ${d ? '' : 'checked'}>
+          <span><strong>${esc(r.name)}</strong><br><span class="muted small">${esc(niceDate(r.date))} · ${esc(r.time)}${d ? ' · already on the calendar' : ''}</span></span></label>
+        <select class="icat" aria-label="Category for ${esc(r.name)}">${catOptions(d ? d.catId : guessCat(r.name))}</select></div>`; }).join('')}</div>
+      <button class="btn" type="submit">Save</button>
+    </form>`);
+  // Changing the category ticks the row (e.g. to fix one already on the calendar).
+  $$('.imp-row').forEach((el) => $('.icat', el).addEventListener('change', () => { $('.ion', el).checked = true; }));
+  $('#iForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    let added = 0, changed = 0, latest = null;
+    for (const el of $$('.imp-row')) {
+      if (!$('.ion', el).checked) continue;
+      const r = rows[+el.dataset.i], catId = $('.icat', el).value, d = dup(r);
+      if (catId !== guessCat(r.name)) state.nameCats[r.name.toLowerCase()] = catId;
+      if (d) { d.catId = catId; d.name = r.name; d.time = r.time; changed++; }
+      else { state.activities.push({ id: uid(), date: r.date, time: r.time, name: r.name, catId, source: 'Garmin' }); added++; }
+      if (!latest || r.date > latest) latest = r.date;
+    }
+    await save();
+    closeSheet();
+    if (latest) calMonth = latest.slice(0, 7);
+    show('calendar');
+    toast(added || changed ? [added ? `Added ${added}` : '', changed ? `updated ${changed}` : ''].filter(Boolean).join(', ') : 'Nothing added');
+    next();
+  });
 }
 
 // Tap a screenshot to see it bigger (tap again to close).
@@ -716,49 +445,4 @@ document.addEventListener('click', (e) => {
   if (!img) return;
   const view = img.closest('.shots').nextElementSibling;
   view.innerHTML = `<img class="shot-big" src="${img.src}" alt="${esc(img.alt)}">`;
-});
-
-/* ---------- Adding numbers to the workout in the form (e.g. Garmin's heart rate for a WodUp workout) ---------- */
-const intoInput = document.createElement('input');
-intoInput.type = 'file'; intoInput.accept = 'image/*'; intoInput.multiple = true; intoInput.hidden = true;
-document.body.appendChild(intoInput);
-document.addEventListener('click', (e) => { if (e.target.closest('#wFromShots')) { intoInput.value = ''; intoInput.click(); } });
-intoInput.addEventListener('change', async () => {
-  const files = [...intoInput.files];
-  const info = $('#wFromShotsInfo');
-  if (!files.length || !info) return;
-  const shots = [];
-  for (const [i, file] of files.entries()) {
-    info.textContent = `Reading screenshot ${i + 1} of ${files.length}…`;
-    try {
-      const { canvas, url } = await prepImage(file);
-      lastUrls.push(url);
-      const shot = await readShot(canvas);
-      shot.kind = detect(shot); shot.url = url;
-      shots.push(shot);
-    } catch (err) { console.error(err); }
-  }
-  if (!$('#wFromShotsInfo')) return; // the form was closed
-  const act = {}, laps = { rows: {} };
-  for (const sh of shots) { parseActivity(sh, act); if (sh.kind === 'garminLaps') parseLaps(sh, laps); }
-  const filled = [];
-  const fill = (sel, v, label) => {
-    const el = $(sel);
-    if (!el || v == null || el.value.trim() || el.closest('.hidden')) return;
-    el.value = v;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    filled.push(label);
-  };
-  fill('#wHr', act.avgHr, `average heart rate ${act.avgHr}`);
-  fill('#wCal', act.calories, `${act.calories} calories`);
-  // Distance workouts: the totals too, if they're still empty.
-  const t = typeOf(($('#wTypes .on') || {}).dataset ? $('#wTypes .on').dataset.t : '');
-  const c = Object.keys(laps.rows).length ? lapsToCardio(laps, t) : {};
-  const dist = act.distanceKm != null ? act.distanceKm : c.distanceKm, time = act.timeSec != null ? act.timeSec : c.timeSec;
-  if (dist != null) fill('#wDist', showDistFor(dist, t), `distance ${fmtDist(dist, t)}`);
-  if (time != null) fill('#wTime', fmtTime(time), `time ${fmtTime(time)}`);
-  info.innerHTML = (filled.length ? `📷 Filled in ${esc(filled.join(', '))} — check them against the screenshot${shots.length > 1 ? 's' : ''}.`
-    : '📷 Nothing new found to fill in (only empty boxes are filled).') +
-    `<div class="shots" style="margin-top:6px">${shots.map((sh, i) => `<img src="${sh.url}" alt="Screenshot ${i + 1}" data-shot>`).join('')}</div><div class="shot-view"></div>`;
 });
