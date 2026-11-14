@@ -274,7 +274,7 @@ function renderCalendar() {
   let cells = '';
   for (let i = 0; i < lead; i++) cells += '<div class="day blank"></div>';
   for (let d = 1; d <= days; d++) {
-    const iso = `${calMonth}-${pad(d)}`, acts = oncePerDay(dayActs(iso));
+    const iso = `${calMonth}-${pad(d)}`, acts = dayActs(iso);
     cells += `<button type="button" class="day${iso === t ? ' today' : ''}${iso > t ? ' future' : ''}" data-day="${iso}" aria-label="${esc(niceDate(iso))}: ${acts.length ? esc(acts.map((a) => catOf(a.catId).name).join(', ')) : 'nothing'}">
       <span class="n">${d}</span><span class="marks">${acts.slice(0, 4).map((a) => { const c = catOf(a.catId); return `<span class="mark" style="--c:${c.color}" title="${esc(a.name)}">${c.icon}</span>`; }).join('')}${acts.length > 4 ? `<span class="more">+${acts.length - 4}</span>` : ''}</span></button>`;
   }
