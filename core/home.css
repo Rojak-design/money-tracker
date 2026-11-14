@@ -73,6 +73,12 @@ main { padding: 0 16px; max-width: 640px; margin: 0 auto; }
 .soon { border: 1.5px dashed var(--line); box-shadow: none; background: transparent; }
 .soon h2 { font-size: 16px; margin: 6px 0 2px; color: var(--muted); }
 .soon .module-icon { filter: grayscale(.6); opacity: .7; }
+/* Habits: open now (its summary card comes later) */
+.soon.live { border: 1.5px solid #ddd6fe; background: var(--card); }
+.soon.live h2 { color: var(--text); }
+.soon.live .module-icon { filter: none; opacity: 1; }
+.soon.live .muted { color: #6d28d9; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .soon.live { border-color: #3b2f57; } .soon.live .muted { color: #a78bfa; } }
 
 .backup h2 { margin-bottom: 4px; }
 .btn {

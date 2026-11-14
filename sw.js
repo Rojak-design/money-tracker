@@ -1,8 +1,8 @@
-// Service worker: lets Rojak (home screen, money tracker and fitness) open with no internet connection.
-// When you change any app file, bump this version number AND the ?v= numbers in index.html, money/index.html and
-// fitness/index.html
+// Service worker: lets Rojak (home screen, money tracker, fitness and habits) open with no internet connection.
+// When you change any app file, bump this version number AND the ?v= numbers in index.html, money/index.html,
+// fitness/index.html and habits/index.html
 // so phones get the update with all files matching.
-const VERSION = 54;
+const VERSION = 55;
 const CACHE = 'rojak-v' + VERSION;
 const FILES = [
   './',
@@ -22,6 +22,10 @@ const FILES = [
   './fitness/style.css?v=' + VERSION,
   './fitness/app.js?v=' + VERSION,
   './fitness/import.js?v=' + VERSION,
+  './habits/',
+  './habits/index.html',
+  './habits/style.css?v=' + VERSION,
+  './habits/app.js?v=' + VERSION,
   './manifest.json',
   './rojak-icon.svg',
   './rojak-icon-192.png',
