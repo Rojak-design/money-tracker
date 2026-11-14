@@ -9,6 +9,7 @@
      nameCats:          { 'activity name (lower case)': catId }   categories you picked for a name, used next time
      lifts:             { id, date, name, weightKg, reps, source }   any weight × reps; bests and est. 1RM worked out
      runRecords:        { id, date, distance: '5k' | '10k' | 'half' | 'full', timeSec, source }   run times
+     links:             { id, date (added), name, url }   your own links, e.g. a workout spreadsheet in Google Drive
      bodyMeasurements:  { id, date, weightKg, heightCm, bodyFatPct }          one per day
      recoveryDays:      { id, date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, bodyBattery, source,
                           sources: { field: 'Whoop' | 'Garmin' } for numbers read from a screenshot }  one per day
@@ -56,13 +57,13 @@ function guessCat(name) {
 }
 
 /* ---------- State ---------- */
-const emptyState = () => ({ categories: [], activities: [], nameCats: {}, lifts: [], runRecords: [], bodyMeasurements: [], recoveryDays: [], settings: {} });
+const emptyState = () => ({ categories: [], activities: [], nameCats: {}, lifts: [], runRecords: [], links: [], bodyMeasurements: [], recoveryDays: [], settings: {} });
 let state = emptyState();
 
 async function load() {
   const saved = await Rojak.load('fitness');
   state = Object.assign(emptyState(), saved || {});
-  for (const k of ['categories', 'activities', 'lifts', 'runRecords', 'bodyMeasurements', 'recoveryDays']) if (!Array.isArray(state[k])) state[k] = [];
+  for (const k of ['categories', 'activities', 'lifts', 'runRecords', 'links', 'bodyMeasurements', 'recoveryDays']) if (!Array.isArray(state[k])) state[k] = [];
   if (!state.nameCats || typeof state.nameCats !== 'object') state.nameCats = {};
   if (!state.settings || typeof state.settings !== 'object') state.settings = {};
   if (migrate() && saved) await save();
@@ -276,7 +277,7 @@ function renderCalendar() {
   const ws = weekStart(t), we = addDays(ws, 6);
   const monthActs = state.activities.filter((a) => a.date.slice(0, 7) === calMonth);
   const weekActs = state.activities.filter((a) => a.date >= ws && a.date <= we);
-  $('#calendar').innerHTML = `<div class="card cal">
+  $('#calendar').innerHTML = `${linksRow()}<div class="card cal">
       <div class="cal-head"><button type="button" class="icon-btn" data-cal="-1" aria-label="Previous month">‹</button>
         <h2>${esc(first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }))}</h2>
         <button type="button" class="icon-btn" data-cal="1" aria-label="Next month">›</button></div>
@@ -293,6 +294,64 @@ function renderCalendar() {
     renderCalendar();
   }));
   $$('[data-day]').forEach((b) => b.addEventListener('click', () => daySheet(b.dataset.day)));
+  $('#editLinks').addEventListener('click', linksSheet);
+}
+
+/* ---------- Your links (e.g. a workout spreadsheet in Google Drive) ---------- */
+// Only web links are kept (https:// or http://), and they open in a new tab or the app that handles them.
+function cleanUrl(v) {
+  let s = String(v || '').trim();
+  if (!s) return null;
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) s = 'https://' + s;
+  try { const u = new URL(s); return /^https?:$/.test(u.protocol) && u.hostname.includes('.') ? u.href : null; } catch (e) { return null; }
+}
+const linkIcon = (url) => (/docs\.google\.com\/spreadsheets|\.xlsx?\b|sheets/i.test(url) ? '📊' : /drive\.google\.com|docs\.google\.com/i.test(url) ? '📁' : '🔗');
+function linksRow() {
+  return `<div class="links-row">${state.links.map((l) => `<a class="link-chip" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${linkIcon(l.url)} ${esc(l.name)}</a>`).join('')}
+    <button type="button" class="link-btn" id="editLinks">${state.links.length ? 'Edit links' : '🔗 Add a link (e.g. your workout spreadsheet)'}</button></div>`;
+}
+function linksSheet() {
+  openSheet('Your links', `<div class="form">
+      <div class="hint">Links to open from Fitness with one tap, e.g. the spreadsheet in Google Drive where you track your workouts. Copy its link from Drive (⋮ → Share → Copy link) and paste it here.</div>
+      <div class="list">${state.links.map((l, i) => `<div class="item link-item">
+        <span class="ico" aria-hidden="true">${linkIcon(l.url)}</span>
+        <button type="button" class="left link-like" data-link="${l.id}"><div class="title">${esc(l.name)}</div><div class="sub">${esc(l.url)}</div></button>
+        <span class="order"><button type="button" class="icon-btn" data-lup="${i}" ${i ? '' : 'disabled'} aria-label="Move up">↑</button><button type="button" class="icon-btn" data-ldown="${i}" ${i < state.links.length - 1 ? '' : 'disabled'} aria-label="Move down">↓</button></span></div>`).join('')}</div>
+      <button type="button" class="btn" id="newLink">+ Add a link</button></div>`);
+  $$('[data-link]').forEach((b) => b.addEventListener('click', () => linkForm(b.dataset.link)));
+  const move = async (i, j) => { const l = state.links; [l[i], l[j]] = [l[j], l[i]]; await save(); render(); linksSheet(); };
+  $$('[data-lup]').forEach((b) => b.addEventListener('click', () => move(+b.dataset.lup, +b.dataset.lup - 1)));
+  $$('[data-ldown]').forEach((b) => b.addEventListener('click', () => move(+b.dataset.ldown, +b.dataset.ldown + 1)));
+  $('#newLink').addEventListener('click', () => linkForm(null));
+}
+function linkForm(id) {
+  const ex = id ? state.links.find((l) => l.id === id) : null;
+  openSheet(ex ? 'Edit link' : 'Add a link', `<form class="form" id="lkForm" novalidate>
+      <label>Name <input id="lkName" value="${esc(ex ? ex.name : '')}" placeholder="e.g. Workout log" autocomplete="off"></label>
+      <label>Link <input id="lkUrl" type="url" inputmode="url" value="${esc(ex ? ex.url : '')}" placeholder="https://docs.google.com/…" autocomplete="off"></label>
+      <button class="btn" type="submit">Save</button>
+      ${ex ? '<button type="button" class="btn danger" id="lkDel">Delete</button>' : ''}
+      <button type="button" class="btn secondary" id="lkBack">Back</button>
+    </form>`);
+  if (!ex) $('#lkName').focus();
+  $('#lkBack').addEventListener('click', linksSheet);
+  $('#lkForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const url = cleanUrl($('#lkUrl').value);
+    if (!url) return toast('Paste a web link (starting https://)');
+    let name = $('#lkName').value.trim();
+    if (!name) name = /spreadsheets|\.xlsx?\b/i.test(url) ? 'Workout spreadsheet' : new URL(url).hostname.replace(/^www\./, '');
+    if (ex) Object.assign(ex, { name, url });
+    else state.links.push({ id: uid(), date: today(), name, url });
+    await save(); render(); linksSheet();
+    toast('Saved');
+  });
+  if (ex) $('#lkDel').addEventListener('click', async () => {
+    if (!confirm(`Delete the link ${ex.name}?`)) return;
+    state.links = state.links.filter((l) => l !== ex);
+    await save(); render(); linksSheet();
+    toast('Deleted');
+  });
 }
 const catOptions = (sel) => state.categories.map((c) => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${c.icon} ${esc(c.name)}</option>`).join('');
 // A day's sessions: change their category or name, add or delete.
