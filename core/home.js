@@ -178,7 +178,11 @@ async function refresh() {
     const money = await Rojak.load('money'), fitness = await Rojak.load('fitness');
     renderMoney(money);
     renderFitness(fitness);
-    try { renderHabits(await Rojak.load('habits'), { money, fitness, water }); } catch (err) {
+    try {
+      const habits = await Rojak.load('habits');
+      Water.setHabits(habits); // the bottles also celebrate when a Water habit's target is reached
+      renderHabits(habits, { money, fitness, water });
+    } catch (err) {
       console.error(err);
       $('#habitsSummary').innerHTML = '<div class="muted small" style="grid-column:1/-1">Tap to open Habits.</div>';
     }
