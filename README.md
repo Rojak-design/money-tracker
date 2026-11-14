@@ -4,6 +4,7 @@ Rojak is a home screen that links to separate mini apps (modules): Money, Fitnes
 installed on your home screen. Plain HTML, CSS and JavaScript — no build step. **All data stays on your phone.**
 
 ## Home screen
+- **Weather** (top-right corner): an icon, the temperature and where you are, e.g. ⛈ 27° Punggol. Uses the phone's location (asked once), rounded to about 1 km; it isn't saved or backed up (only the last forecast is kept on the phone, so it still shows for a while offline, faded after an hour). In Singapore the icon and place come from NEA's 2-hour forecast for the nearest of its ~47 areas (data.gov.sg); the temperature and the next 12 hours (icon, temperature, chance of rain) come from Open-Meteo, which also gives the icon elsewhere ("Near you"). Both are free and need no sign-up; only the rounded location is sent (to Open-Meteo — the NEA area is picked on the phone). Refreshes when you open the app and every 30 minutes. Tap it for the next 12 hours. If location isn't allowed it shows **📍 Weather** (tap for how to turn it on).
 - **Water** (not a module — five bottles in a white card at the top): tap where you want the water to reach — the lower half of a bottle fills it halfway, the upper half fills it to the top. Bottles fill left to right; tapping the last bottle at the level it's already at empties it (to undo a mistap). The water is this month's hair colour; underneath it says e.g. "2½ of 5", and when all five are full the bottles bounce and a few sparkles pop. Each day starts at 0 (also when the app is left open past midnight); earlier days stay saved in the shared store under `mod:water` (`days: {date, bottles}`, bottles in halves) and are in the backup.
 - **Money** card: what you spent today and your net total (the same total as on the Accounts screen: bank accounts minus the card bills due this month / pay cycle). Tap it to open the money tracker.
 - **Fitness** card: this week's sessions by category, your latest record (a new best lift or fastest run) and your latest recovery score. Tap it to open Fitness.
@@ -111,6 +112,7 @@ On iPhone, the home-screen app and Safari keep separate data — use the home-sc
 - `core/avatar.js` – her drawing, its monthly hair colours and her waving hand
 - `core/cat.js` – the cat and its monthly breeds
 - `core/water.js` – the water bottles on the home screen
+- `core/weather.js` – the weather in the top-right corner (location, NEA and Open-Meteo forecasts, icons)
 - `money/` – the money tracker: `index.html`, `style.css`, `app.js` (accounts, transactions, categories, reconciliation, settings), `plan.js` (recurring payments, savings projects, trips and the forecast)
 - `fitness/` – the fitness module: `index.html`, `style.css`, `app.js` (calendar and categories, records, body measurements, recovery), `import.js` (reading screenshots)
 - `habits/` – the habits module: `index.html`, `style.css`, `app.js` (the Habits screen: list, calendars, forms), `engine.js` (periods, progress, streaks and "at risk", shared with the home screen), `rules.js` (linked-habit rules that read other modules' data)
