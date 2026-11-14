@@ -174,10 +174,11 @@ async function renderBackupInfo() {
 }
 async function refresh() {
   try {
+    const water = await Water.load();
     const money = await Rojak.load('money'), fitness = await Rojak.load('fitness');
     renderMoney(money);
     renderFitness(fitness);
-    try { renderHabits(await Rojak.load('habits'), { money, fitness }); } catch (err) {
+    try { renderHabits(await Rojak.load('habits'), { money, fitness, water }); } catch (err) {
       console.error(err);
       $('#habitsSummary').innerHTML = '<div class="muted small" style="grid-column:1/-1">Tap to open Habits.</div>';
     }
@@ -330,7 +331,8 @@ function hello() { wave(); swish(); }
 $('#avatar').addEventListener('click', wave);
 $('#cat').addEventListener('click', swish);
 // Opening the app again after switching away says hello again.
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') hello(); });
+// (A new day also starts the water bottles at 0.)
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { Water.checkDay(); hello(); } });
 
 async function init() {
   const hair = hairForMonth(), cat = catForMonth();

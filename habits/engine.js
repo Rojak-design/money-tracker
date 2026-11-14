@@ -28,9 +28,10 @@ const HabitsEngine = (() => {
   const freqOf = (h) => FREQS[h.freq] || FREQS.daily;
   const isLinked = (h) => h.kind === 'linked';
   const ruleOf = (h) => (isLinked(h) && h.rule ? ruleById(h.rule.id) || null : null);
-  // The rule can read its module's data (a linked habit whose module has nothing saved counts as 0).
-  const ruleReady = (r) => !!(r && src[r.module]);
-  const kindOf = (h) => (h.freq === 'weekly' ? 'week' : 'month');
+  // The rule can read its module's data (a linked habit whose module has nothing saved counts as 0; rules marked
+  // alwaysReady, e.g. Water, work before anything is saved).
+  const ruleReady = (r) => !!(r && (src[r.module] || r.alwaysReady));
+  const kindOf = (h) => (h.freq === 'weekly' ? 'week' : h.freq === 'daily' ? 'day' : 'month');
   const targetOf = (h) => (isLinked(h) ? Math.max(0, +h.target || 0) : h.freq === 'daily' ? 1 : Math.max(1, +h.target || 1));
   const started = (h, t = today()) => h.date <= t;
   const atMost = (h) => { const r = ruleOf(h); return !!(r && r.atMost); };
@@ -61,9 +62,16 @@ const HabitsEngine = (() => {
     return { value: new Set(days).size, days };
   }
   // The days to fill in on the calendar (days ticked, or days the linked module counted), from the first day on.
+  // Daily linked habits (e.g. 5 bottles of water a day): the days that reached the target.
   function doneDays(h, from, to) {
     const f = firstDay(h);
-    return new Set(measure(h, from < f ? f : from, to).days);
+    if (from < f) from = f;
+    if (isLinked(h) && h.freq === 'daily') {
+      const out = new Set();
+      for (let d = from; d <= to; d = addDays(d, 1)) if (isDone(h, d)) out.add(d);
+      return out;
+    }
+    return new Set(measure(h, from, to).days);
   }
 
   // Each period from the one the habit starts in up to the one today is in:
@@ -134,7 +142,9 @@ const HabitsEngine = (() => {
   }
 
   /* ---------- Today and "at risk", for the home screen ---------- */
-  const isDone = (h, iso) => state.checks.some((c) => c.habitId === h.id && c.date === iso);
+  // Done on a day: ticked (manual), or the day's value reached the target (daily linked habits).
+  const isDone = (h, iso) => (isLinked(h) ? measure(h, iso, iso).value >= targetOf(h) && targetOf(h) > 0
+    : state.checks.some((c) => c.habitId === h.id && c.date === iso));
   // Is a weekly / monthly habit at risk in the period today is in? { text, over } or null.
   //   counts (times, runs, days): what's still needed is about as many days as are left (or more);
   //   limits (spend at most): over it already, or spending at a pace that would go over by the end;

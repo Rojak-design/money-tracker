@@ -7,7 +7,8 @@
      moduleName    shown in the form, e.g. 'Fitness'
      icon          shown on the habit
      label         "what to measure", shown in the form
-     periods       which of 'week' / 'month' it can be checked over
+     periods       which of 'day' / 'week' / 'month' it can be checked over ('day': a daily linked habit — each
+                   day is done when that day's value reaches the target, and shows on the calendar)
      defaultTarget { week, month }
      targetLabel(opts, src)          the words after the target number in the form, e.g. 'runs' or 'S$ saved'
      optionsHtml(src, opts)          extra choices for the rule (or '')
@@ -18,6 +19,8 @@
      progress(value, target, src, opts)   progress for display, e.g. '2 of 3 runs' or 'S$1,240 of S$2,000 saved'
      defaultName(opts, target, period, src)   the habit's name when you leave it empty
    Optional:
+     alwaysReady   true when the habit works before the module has saved anything (it counts as 0)
+     maxTarget     the highest target allowed (e.g. 5 water bottles)
      atMost        true when the target is a limit (spend at most S$800): a period is met when it ends at or under
                    the target, and missed as soon as it goes over
      autoTarget    true when the rule works out each period's target itself (targetFor); no target is asked for
@@ -56,6 +59,9 @@ const R_calMonth = (iso) => { const s = iso.slice(0, 8) + '01'; return { start: 
 const R_week = (iso) => { const s = R_addDays(iso, -((R_day(iso).getDay() + 6) % 7)); return { start: s, end: R_addDays(s, 6), month: s.slice(0, 7) }; };
 const R_checks = (root, name) => [...root.querySelectorAll(`input[name=${name}]:checked`)].map((x) => x.value);
 const R_chips = (name, items, on) => `<div class="pick-grid">${items.map((x) => `<label class="pick-chip"><input type="checkbox" name="${name}" value="${R_esc(x.id)}" ${on.has(x.id) ? 'checked' : ''}><span>${R_esc(x.label)}</span></label>`).join('')}</div>`;
+
+// 2.5 → "2½" (water bottles are counted in halves)
+const W_fmt = (n) => (n % 1 ? `${Math.floor(n) || ''}½` : String(n));
 
 /* ---------- Money ---------- */
 const M = (src) => src.money || {};
@@ -522,6 +528,34 @@ const HABIT_RULES = [
     format(v, src, opts) { return `${v} ${v === 1 ? this.targetLabel(opts).replace('days', 'day') : this.targetLabel(opts)}`; },
     progress(v, target, src, opts) { return `${v} of ${target} ${target === 1 ? this.targetLabel(opts).replace('days', 'day') : this.targetLabel(opts)}`; },
     defaultName: (opts, target, period) => (opts.what === 'reconcile' ? `Reconcile ${target}× a ${period}` : `Log spending ${target} days a ${period}`)
+  },
+
+  /* ----- Water (the bottles on the home screen; saved under 'mod:water' as days: { date, bottles }) ----- */
+  {
+    id: 'water.bottles',
+    module: 'water', moduleName: 'Water', icon: '💧',
+    label: 'Bottles of water a day',
+    periods: ['day'],
+    defaultTarget: { day: 5 },
+    maxTarget: 5,
+    // Works before any water is logged (no bottles yet counts as 0).
+    alwaysReady: true,
+    targetLabel: () => 'bottles',
+    optionsHtml: () => '<span class="hint">From the water bottles on the Rojak home screen (up to 5 a day, in halves). A day is done when you reach the target.</span>',
+    readOptions: () => ({}),
+    measure(src, opts, from, to) {
+      let value = 0;
+      const days = [];
+      for (const d of (src.water && src.water.days) || []) {
+        if (d.date < from || d.date > to || !(d.bottles > 0)) continue;
+        value += +d.bottles;
+        days.push(d.date);
+      }
+      return { value, days };
+    },
+    format: (v) => `${W_fmt(v)} bottle${v === 1 ? '' : 's'}`,
+    progress: (v, target) => `${W_fmt(v)} of ${W_fmt(target)} bottles`,
+    defaultName: (opts, target) => `Drink ${W_fmt(target)} bottle${target === 1 ? '' : 's'} of water a day`
   }
 ];
   const ruleById = (id) => HABIT_RULES.find((r) => r.id === id);

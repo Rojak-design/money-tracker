@@ -8,7 +8,8 @@
               target: times per week / month for manual habits (1 for daily); for linked habits the number to reach
               in the rule's unit (runs, S$ saved…)
      checks:  { id, habitId, date }   one per day a manual habit was ticked as done
-   Linked habits are checked automatically from another module's data (read only; see rules.js).
+   Linked habits are checked automatically from another module's data (read only; see rules.js). Daily linked
+   habits (Water: bottles a day) are done on a day when that day's value reaches the target.
 
    Periods are days, weeks (Monday to Sunday) or calendar months (Money habits: pay cycles when a payday is set).
    Days, weeks and months before a habit's start date don't count. The first week or month, when the start date
@@ -101,6 +102,12 @@ const shownMonth = {}, shownYear = {};
 function progressLine(h, st, t) {
   const p = st.current;
   if (!p) return '';
+  if (h.freq === 'daily' && isLinked(h)) {
+    // Daily linked habits (e.g. water): today's amount against the target.
+    const pct = p.target > 0 ? Math.max(0, Math.min(100, Math.round((p.value / p.target) * 100))) : 0;
+    return `<div class="progress-line"><strong>${esc(progressText(h, p.value, p.target))}</strong> today${p.status === 'met' ? ' · target met ✓' : ''}</div>
+      <div class="bar"><div style="width:${pct}%"></div></div>`;
+  }
   if (h.freq === 'daily') return `<div class="progress-line">${p.status === 'met' ? '<strong>Done today ✓</strong>' : 'Not done yet today'}</div>`;
   const left = daysBetween(t, p.end);
   const word = `this ${periodWord(h)}${usesCycles(h) ? ` (${shortDate(p.start)} – ${shortDate(p.end)})` : ''}`;
@@ -376,14 +383,14 @@ function habitForm(id) {
     $$('#lPeriod button').forEach((b) => { if (b.dataset.p === 'month') b.textContent = wordFor('month') === 'month' ? 'Month' : `Month (${wordFor('month')})`; });
   };
   const showPeriod = () => {
-    $('#lPeriod').innerHTML = rule.periods.map((p) => `<button type="button" data-p="${p}" class="${p === period ? 'on' : ''}">${p === 'week' ? 'Week (Mon–Sun)' : 'Month'}</button>`).join('');
+    $('#lPeriod').innerHTML = rule.periods.map((p) => `<button type="button" data-p="${p}" class="${p === period ? 'on' : ''}">${p === 'week' ? 'Week (Mon–Sun)' : p === 'day' ? 'Day' : 'Month'}</button>`).join('');
     $$('#lPeriod button').forEach((b) => b.addEventListener('click', () => { period = b.dataset.p; if (!targetTouched) $('#lTarget').value = rule.defaultTarget[period]; showPeriod(); }));
     showUnit();
   };
   const showRule = () => {
     $('#lModule').value = rule.module;
     $('#lRule').innerHTML = HABIT_RULES.filter((r) => r.module === rule.module).map((r) => `<option value="${r.id}" ${r.id === rule.id ? 'selected' : ''}>${esc(r.label)}</option>`).join('');
-    const why = !src[rule.module] ? `Nothing saved in ${rule.moduleName} yet.` : rule.unavailable ? rule.unavailable(src) : '';
+    const why = !src[rule.module] && !rule.alwaysReady ? `Nothing saved in ${rule.moduleName} yet.` : rule.unavailable ? rule.unavailable(src) : '';
     $('#lUnavailable').textContent = why;
     $('#lUnavailable').classList.toggle('hidden', !why);
     $('#lOpts').innerHTML = why ? '' : rule.optionsHtml(src, ropts && ropts.id === rule.id ? ropts : null);
@@ -417,12 +424,13 @@ function habitForm(id) {
       if (freq !== 'daily' && !(target >= 1 && target <= (freq === 'weekly' ? 7 : 31))) return toast(freq === 'weekly' ? 'Times per week: 1 to 7' : 'Times per month: 1 to 31');
       data = { name, kind, freq, target, date };
     } else {
-      if (!src[rule.module] || (rule.unavailable && rule.unavailable(src))) return toast($('#lUnavailable').textContent || `Nothing saved in ${rule.moduleName} yet`);
+      if ((!src[rule.module] && !rule.alwaysReady) || (rule.unavailable && rule.unavailable(src))) return toast($('#lUnavailable').textContent || `Nothing saved in ${rule.moduleName} yet`);
       const o = rule.readOptions($('#lOpts'), src);
       if (typeof o === 'string') return toast(o);
       const target = rule.autoTarget ? 0 : Math.round(+$('#lTarget').value * 100) / 100;
       if (!rule.autoTarget && !(target > 0)) return toast('Set a target above 0');
-      const f = period === 'week' ? 'weekly' : 'monthly';
+      if (rule.maxTarget && target > rule.maxTarget) return toast(`The target can be at most ${rule.maxTarget}`);
+      const f = period === 'week' ? 'weekly' : period === 'day' ? 'daily' : 'monthly';
       if (!name) name = rule.defaultName(o, target, wordFor(period, o), src);
       data = { name, kind, freq: f, target, date, rule: Object.assign({ id: rule.id }, o) };
     }
