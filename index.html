@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Rojak</title>
-  <meta name="description" content="Rojak — your everyday app: money, fitness and more to come. Data stays on your phone.">
+  <meta name="description" content="Rojak — your everyday app: money, fitness, habits and more to come. Data stays on your phone.">
   <meta name="theme-color" content="#0f766e">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="rojak-icon.svg" type="image/svg+xml">
@@ -14,7 +14,7 @@
   <meta name="apple-mobile-web-app-title" content="Rojak">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <!-- When app files change, bump ?v= here, in money/index.html, fitness/index.html, habits/index.html and the version in sw.js (keep them all the same). -->
-  <link rel="stylesheet" href="core/home.css?v=60">
+  <link rel="stylesheet" href="core/home.css?v=61">
 </head>
 <body>
   <!-- She and the cat peek over the top edge of the Money card; the header's bottom is that edge. -->
@@ -42,11 +42,16 @@
       <div id="fitnessSummary" class="money-summary"><div class="muted small">Loading…</div></div>
     </a>
 
+    <!-- Habits module: today's progress and habits at risk; tap to open it -->
+    <a class="card module-card habits" href="habits/" id="habitsCard">
+      <div class="module-head"><span class="module-icon">🌱</span><h2>Habits</h2><span class="open">Open ›</span></div>
+      <div id="habitsSummary" class="money-summary"><div class="muted small">Loading…</div></div>
+    </a>
+
     <!-- Modules to be built later -->
     <div class="soon-grid">
-      <a class="card soon live" href="habits/" id="habitsCard"><span class="module-icon">🌱</span><h2>Habits</h2><div class="muted small">Open ›</div></a>
       <div class="card soon"><span class="module-icon">📚</span><h2>Books / Music</h2><div class="muted small">Coming soon</div></div>
-      <div class="card soon wide"><span class="module-icon">🗓️</span><h2>Scheduler</h2><div class="muted small">Coming soon</div></div>
+      <div class="card soon"><span class="module-icon">🗓️</span><h2>Scheduler</h2><div class="muted small">Coming soon</div></div>
     </div>
 
     <!-- Backup and restore for the whole app: one file with every module (screenshots are never included) -->
@@ -87,9 +92,11 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="core/store.js?v=60"></script>
-  <script src="core/avatar.js?v=60"></script>
-  <script src="core/cat.js?v=60"></script>
-  <script src="core/home.js?v=60"></script>
+  <script src="core/store.js?v=61"></script>
+  <script src="core/avatar.js?v=61"></script>
+  <script src="core/cat.js?v=61"></script>
+  <script src="habits/rules.js?v=61"></script>
+  <script src="habits/engine.js?v=61"></script>
+  <script src="core/home.js?v=61"></script>
 </body>
 </html>
