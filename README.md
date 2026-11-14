@@ -6,7 +6,7 @@ installed on your home screen. Plain HTML, CSS and JavaScript — no build step.
 ## Home screen
 - **Money** card: what you spent today and your net total (the same total as on the Accounts screen: bank accounts minus the card bills due this month / pay cycle). Tap it to open the money tracker.
 - **Fitness** card: this week's sessions by category, your latest record (a new best lift or fastest run) and your latest recovery score. Tap it to open Fitness.
-- **Habits**: tap to open the habit tracker (its summary on the home screen comes later).
+- **Habits** card: **Today** — daily habits done today (and which are still to do); **At risk** — weekly and monthly habits that may not make it this week, month or pay cycle, with up to 4 listed (red when they can't any more): counts where what's still needed is about as many days as are left, limits already over or at 90% / on pace to go over, savings below the target, and loan payments still due in the last week of the month. Tap it to open Habits.
 - **Books / Music, Scheduler**: placeholders for modules to be built later.
 - **Backup** (for the whole app, every module at once):
   - **Export backup**: one file with everything in Rojak (Money, Fitness…). Screenshots are never included, so the file stays small.
@@ -109,7 +109,7 @@ On iPhone, the home-screen app and Safari keep separate data — use the home-sc
 - `core/cat.js` – the cat and its monthly breeds
 - `money/` – the money tracker: `index.html`, `style.css`, `app.js` (accounts, transactions, categories, reconciliation, settings), `plan.js` (recurring payments, savings projects, trips and the forecast)
 - `fitness/` – the fitness module: `index.html`, `style.css`, `app.js` (calendar and categories, records, body measurements, recovery), `import.js` (reading screenshots)
-- `habits/` – the habits module: `index.html`, `style.css`, `app.js` (habits, ticks, streaks, completion, calendars), `rules.js` (linked-habit rules that read other modules' data)
+- `habits/` – the habits module: `index.html`, `style.css`, `app.js` (the Habits screen: list, calendars, forms), `engine.js` (periods, progress, streaks and "at risk", shared with the home screen), `rules.js` (linked-habit rules that read other modules' data)
 - `money/ocr/` – Tesseract.js (Apache 2.0, licences included) for reading screenshots (Money balances and receipts, Fitness imports); loaded only when you pick a screenshot
 - `manifest.json`, `sw.js`, `rojak-icon*`, `rojak-apple-touch-icon.png` – make it installable and work offline (`icon-v2.svg`, `apple-touch-icon-v2.png` are the money tracker's own tab icon)
 

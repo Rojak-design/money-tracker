@@ -123,6 +123,32 @@ function renderFitness(f) {
       <div class="sub">${r ? esc(dayLabel(r.date)) : 'None yet'}</div></div>`;
 }
 
+/* ----- Habits summary: worked out by the Habits module's own engine (habits/engine.js) ----- */
+function renderHabits(h, sources) {
+  const el = $('#habitsSummary');
+  if (!h || !(h.habits || []).length) {
+    el.innerHTML = `<div class="muted small" style="grid-column:1/-1">No habits yet. Tap to add one — tick them off yourself, or link them to Fitness and Money.</div>`;
+    return;
+  }
+  HabitsEngine.use({ habits: h.habits, checks: h.checks || [] }, sources);
+  const s = HabitsEngine.summary();
+  if (!s.live) {
+    const next = h.habits.map((x) => HabitsEngine.firstDay(x)).sort()[0];
+    el.innerHTML = `<div class="muted small" style="grid-column:1/-1">Your habits start on ${esc(dayLabel(next))}.</div>`;
+    return;
+  }
+  const left = s.notDone.map((x) => x.name);
+  const risky = s.risks.slice(0, 4);
+  el.innerHTML = `
+    <div class="stat"><div class="label">Today</div><div class="value">${s.daily ? `${s.doneToday}<small>/${s.daily}</small>` : '–'}</div>
+      <div class="sub">${!s.daily ? 'No daily habits' : left.length ? esc(`To do: ${left.slice(0, 3).join(', ')}${left.length > 3 ? ` +${left.length - 3}` : ''}`) : 'All done ✓'}</div></div>
+    <div class="stat"><div class="label">At risk</div><div class="value ${s.risks.length ? 'neg' : ''}">${s.others ? s.risks.length : '–'}</div>
+      <div class="sub">${!s.others ? 'No weekly or monthly habits' : s.risks.length ? 'this week or month' : `All on track ✓${s.metNow ? ` · ${s.metNow} done` : ''}`}</div></div>
+    ${risky.length ? `<div class="risks">${risky.map((x) => `<div class="risk${x.over ? ' over' : ''}"><span class="risk-icon">${esc(x.icon)}</span>
+      <div class="risk-text"><strong>${esc(x.habit.name)}</strong><div class="sub">${esc(x.over && !x.limit ? `${x.text} · won't make it this ${x.period}` : x.text)}</div></div></div>`).join('')}
+      ${s.risks.length > risky.length ? `<div class="sub muted">+${s.risks.length - risky.length} more</div>` : ''}</div>` : ''}`;
+}
+
 async function renderBackupInfo() {
   const last = await Rojak.lastBackupAt();
   $('#backupInfo').textContent = (last ? `Last backup ${niceWhen(last)}. ` : 'No backup made yet. ') +
@@ -148,13 +174,19 @@ async function renderBackupInfo() {
 }
 async function refresh() {
   try {
-    renderMoney(await Rojak.load('money'));
-    renderFitness(await Rojak.load('fitness'));
+    const money = await Rojak.load('money'), fitness = await Rojak.load('fitness');
+    renderMoney(money);
+    renderFitness(fitness);
+    try { renderHabits(await Rojak.load('habits'), { money, fitness }); } catch (err) {
+      console.error(err);
+      $('#habitsSummary').innerHTML = '<div class="muted small" style="grid-column:1/-1">Tap to open Habits.</div>';
+    }
     await renderBackupInfo();
   } catch (err) {
     console.error(err);
     $('#moneySummary').innerHTML = `<div class="muted small">Could not open storage on this browser.</div>`;
     $('#fitnessSummary').innerHTML = '';
+    $('#habitsSummary').innerHTML = '';
   }
 }
 

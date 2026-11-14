@@ -27,6 +27,8 @@
      judgeAtEnd    true when the current period is only decided when it ends (savings go down as money is spent)
      soFar(value, target, src, opts)  progress for the current period of a judgeAtEnd rule
      noDataWhy(src, opts, period)    why a period before dataStart isn't counted
+     risk          'due' when the period's target is a payment that comes due (loan): the home screen only calls
+                   it at risk in the last week of the month
      extra(src, opts, today)         one more line under the progress, e.g. 'S$12,400 left · paid off by Dec 2027'
      bind(root, src)                 hook up buttons in optionsHtml (e.g. shortcuts)
      period(src, kind, iso, opts)    { start, end, month, word } of the week or month a day is in, when the rule
@@ -38,6 +40,8 @@
    not cents). */
 'use strict';
 
+// Only HABIT_RULES and ruleById are shared; the helpers stay inside (the home screen loads this file too).
+const { HABIT_RULES, ruleById } = (() => {
 const R_pad = (n) => String(n).padStart(2, '0');
 const R_day = (iso) => new Date(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10));
 const R_iso = (d) => `${d.getFullYear()}-${R_pad(d.getMonth() + 1)}-${R_pad(d.getDate())}`;
@@ -371,6 +375,7 @@ const HABIT_RULES = [
     module: 'money', moduleName: 'Money', icon: '🏦',
     label: 'Pay off a loan by a target date',
     autoTarget: true,
+    risk: 'due',
     periods: ['month'],
     defaultTarget: { month: 0 },
     unavailable: (src) => (loans(src).length ? '' : 'Add the loan in Money first: Plan → Recurring, ending "when a loan is paid off".'),
@@ -519,4 +524,6 @@ const HABIT_RULES = [
     defaultName: (opts, target, period) => (opts.what === 'reconcile' ? `Reconcile ${target}× a ${period}` : `Log spending ${target} days a ${period}`)
   }
 ];
-const ruleById = (id) => HABIT_RULES.find((r) => r.id === id);
+  const ruleById = (id) => HABIT_RULES.find((r) => r.id === id);
+  return { HABIT_RULES, ruleById };
+})();
