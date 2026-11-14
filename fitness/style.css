@@ -310,3 +310,11 @@ label.imported input { border-color: var(--primary); }
 .chart .readout { margin-top: 2px; min-height: 1.3em; }
 .rec-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--card); }
 .rec-row.dup { opacity: .7; }
+
+/* ---------- Your links ---------- */
+.links-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.link-chip { display: inline-flex; align-items: center; gap: 4px; padding: 7px 12px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); color: var(--text); text-decoration: none; font-size: 14px; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-item { display: flex; align-items: center; gap: 10px; }
+.link-item .link-like { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.link-item .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-item .order { display: flex; gap: 2px; }
