@@ -158,26 +158,46 @@ function planFab() {
   else recurringSheet();
 }
 
+// Account filter for the Recurring list: 'all', 'cards', 'banks' or an account id.
+let recAccFilter = 'all';
+function recMatchesAcc(r) {
+  if (recAccFilter === 'all') return true;
+  const ids = [r.accountId, r.type === 'transfer' ? r.toAccountId : null].filter(Boolean);
+  if (recAccFilter === 'cards') return ids.some(isCard);
+  if (recAccFilter === 'banks') return ids.some((id) => accountById(id) && !isCard(id));
+  return ids.includes(recAccFilter);
+}
 function renderRecurring() {
   const el = $('#plan-recurring');
   if (!state.recurring.length) {
     el.innerHTML = `<div class="empty">No recurring payments yet.<br>Tap + to add instalments, loan repayments, subscriptions, rent, salary…</div>`;
     return;
   }
+  if (!['all', 'cards', 'banks'].includes(recAccFilter) && !accountById(recAccFilter)) recAccFilter = 'all';
+  const filterHtml = `<select id="recAccFilter" aria-label="Filter by account" style="margin-bottom:12px">
+    <option value="all">All accounts</option>
+    ${cardAccounts().length ? '<option value="cards">💳 All credit cards</option>' : ''}
+    ${cardAccounts().length && bankAccounts().length ? '<option value="banks">🏦 All bank accounts</option>' : ''}
+    ${accountOptions()}</select>`;
+  const list = state.recurring.filter(recMatchesAcc);
   const t = today();
   const soon = [];
-  for (const r of state.recurring) {
+  for (const r of list) {
     for (const o of occurrencesIdx(r, t, addDaysISO(t, 30))) soon.push({ r, d: o.d, amt: nthAmount(r, o.i) });
   }
   soon.sort((a, b) => a.d.localeCompare(b.d));
 
-  const active = state.recurring.filter((r) => !recurringSummary(r).finished);
-  const done = state.recurring.filter((r) => recurringSummary(r).finished);
+  const active = list.filter((r) => !recurringSummary(r).finished);
+  const done = list.filter((r) => recurringSummary(r).finished);
+  // Which account a payment uses (shown when the list isn't narrowed to one account).
+  const accTag = (r) => (r.type === 'transfer' || !accountById(r.accountId) ? ''
+    : `${isCard(r.accountId) ? '💳 ' : ''}${esc(accountName(r.accountId))}`);
+  const showAcc = !accountById(recAccFilter);
   const perMonth = (type) => active.filter((r) => r.type === type).reduce((s, r) => s + monthlyEquivalent(r), 0);
   // How a recurring amount is shown: + for income, − for spending, ⇄ for a transfer between your accounts.
   const shownAmt = (r, amt) => (r.type === 'transfer' ? `⇄ ${money(amt)}` : money(r.type === 'income' ? amt : -amt, true));
 
-  let html = `<div class="tiles">
+  let html = filterHtml + `<div class="tiles">
     <div class="tile"><div class="label">Recurring spending</div><div class="value">${money(perMonth('expense'))}</div><div class="label">per month (approx.)</div></div>
     <div class="tile"><div class="label">Recurring income</div><div class="value">${money(perMonth('income'))}</div><div class="label">per month (approx.)</div></div>
   </div>`;
@@ -185,7 +205,7 @@ function renderRecurring() {
   if (xfers.length) html += `<p class="muted small" style="margin:-4px 0 12px">⇄ Plus ${money(perMonth('transfer'))} a month moved between your own accounts (not counted as spending).</p>`;
   if (soon.length) {
     html += `<h2 class="section-title">Due in the next 30 days</h2><div class="card">` +
-      soon.map(({ r, d, amt }) => `<div class="kv"><span class="k">${niceDate(d)} · ${esc(r.name)}</span>
+      soon.map(({ r, d, amt }) => `<div class="kv"><span class="k">${niceDate(d)} · ${esc(r.name)}${showAcc && accTag(r) ? ` <span class="muted small">· ${accTag(r)}</span>` : ''}</span>
         <span class="v ${r.type === 'income' ? 'pos' : ''}">${shownAmt(r, amt)}</span></div>`).join('') +
       `</div>`;
   }
@@ -197,13 +217,17 @@ function renderRecurring() {
     else if (s.left != null) bits.push(`${s.left} of ${s.total} left · ends ${monthLabel(monthKey(s.last))}`);
     else bits.push(`${FREQS[r.freq].label.toLowerCase()} · ongoing`);
     return `<button class="item" data-recur="${r.id}">
-      <div class="left"><div class="title">${esc(r.name)}</div><div class="sub">${bits.join(' · ')} · ${r.type === 'transfer'
-        ? `${esc(accountName(r.accountId))} → ${esc(accountName(r.toAccountId))}` : esc(r.category)}</div></div>
+      <div class="left"><div class="title">${esc(r.name)}</div><div class="sub">${r.type === 'transfer' ? `${esc(accountName(r.accountId))} → ${esc(accountName(r.toAccountId))} · `
+        : showAcc && accTag(r) ? `${accTag(r)} · ` : ''}${bits.join(' · ')}${r.type === 'transfer' ? '' : ' · ' + esc(r.category)}</div></div>
       <div class="amt ${r.type === 'income' ? 'pos' : ''}">${shownAmt(r, r.amount)}</div></button>`;
   };
   html += `<h2 class="section-title">Active</h2><div class="list">${active.map(item).join('') || '<div class="empty">Nothing active.</div>'}</div>`;
   if (done.length) html += `<h2 class="section-title">Finished</h2><div class="list">${done.map(item).join('')}</div>`;
+  if (!list.length) html = filterHtml + `<div class="empty">No recurring payments on this account.</div>`;
   el.innerHTML = html;
+  const fsel = $('#recAccFilter');
+  fsel.value = recAccFilter;
+  fsel.addEventListener('change', (e) => { recAccFilter = e.target.value; renderRecurring(); });
   el.querySelectorAll('[data-recur]').forEach((b) => b.addEventListener('click', () => recurringSheet(b.dataset.recur)));
 }
 
