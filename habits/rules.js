@@ -22,6 +22,11 @@
                    the target, and missed as soon as it goes over
      autoTarget    true when the rule works out each period's target itself (targetFor); no target is asked for
      targetFor(src, opts, period)    that period's target ({ start, end, month })
+     wholePeriod   true for rules that compare balances: each period is measured whole, from the balance at the end
+                   of the day before it began; a period that began before dataStart isn't counted
+     judgeAtEnd    true when the current period is only decided when it ends (savings go down as money is spent)
+     soFar(value, target, src, opts)  progress for the current period of a judgeAtEnd rule
+     noDataWhy(src, opts, period)    why a period before dataStart isn't counted
      extra(src, opts, today)         one more line under the progress, e.g. 'S$12,400 left · paid off by Dec 2027'
      bind(root, src)                 hook up buttons in optionsHtml (e.g. shortcuts)
      period(src, kind, iso, opts)    { start, end, month, word } of the week or month a day is in, when the rule
@@ -258,18 +263,28 @@ const HABIT_RULES = [
         ${R_chips('acc', accs.map((a) => ({ id: a.id, label: a.name })), on)}
         <span class="hint">Saved = these accounts' total at the end of the week or month, minus their total at the end of the one before (balances as on Money's Accounts screen).
           Everything that goes in or out of them counts: card bill payments and money moved to other accounts lower it, money moved in raises it; moves between two ticked accounts cancel out.
-          With a payday set in Money, a month is your pay cycle, named after the month the pay comes in (25 Nov – 24 Dec is November).</span>`;
+          With a payday set in Money, a month is your pay cycle, named after the month the pay comes in (25 Nov – 24 Dec is November).
+          Each week or month is judged when it ends; until then you see what's saved so far and how much you can still spend.
+          A week or month that began before an account was added to Money isn't counted (its balance before then isn't known).</span>`;
     },
     readOptions(root) {
       const accounts = R_checks(root, 'acc');
       return accounts.length ? { accounts } : 'Pick at least one bank account';
     },
     period: moneyPeriod,
+    wholePeriod: true,
+    judgeAtEnd: true,
     // The latest start date of the ticked accounts: before it the app doesn't know their balance.
     dataStart: (src, opts) => latestStart(bankAccounts(src).filter((a) => (opts.accounts || []).includes(a.id))),
+    noDataWhy(src, opts, p) {
+      const late = bankAccounts(src).filter((a) => (opts.accounts || []).includes(a.id) && a.startDate && a.startDate > p.start);
+      return `${late.map((a) => a.name).join(', ')} ${late.length > 1 ? 'were' : 'was'} added to Money part-way through, so the balance before it began isn't known`;
+    },
     measure: (src, opts, from, to) => ({ value: changeIn(src, bankAccounts(src).filter((a) => (opts.accounts || []).includes(a.id)), from, to), days: [] }),
     format: (v, src) => moneyFmt(v, src),
     progress: (v, target, src) => `${moneyFmt(v, src)} of ${moneyFmt(target, src)} saved`,
+    soFar: (v, target, src) => (v >= target ? `${moneyFmt(v, src)} saved so far · ${moneyFmt(v - target, src)} left to spend`
+      : `${moneyFmt(v, src)} saved so far · ${moneyFmt(target - v, src)} short of ${moneyFmt(target, src)}`),
     defaultName: (opts, target, period, src) => `Save ${moneyFmt(target, src)} a ${period}`
   },
 
@@ -420,7 +435,12 @@ const HABIT_RULES = [
           Only projects whose savings are an account's balance can be tracked.</span>`;
     },
     readOptions(root) { const projectId = root.querySelector('select[name=project]').value; return projectId ? { projectId } : 'Pick a project'; },
+    wholePeriod: true,
+    judgeAtEnd: true,
     dataStart: (src, opts) => { const p = projectOf(src, opts); const a = p && (M(src).accounts || []).find((x) => x.id === p.accountId); return (a && a.startDate) || ''; },
+    noDataWhy(src, opts) { const p = projectOf(src, opts); return `${p ? accountName(src, p.accountId) : 'The account'} was added to Money part-way through, so the balance before it began isn't known`; },
+    soFar: (v, target, src) => (target <= 0 ? `${moneyFmt(v, src)} saved so far · nothing more needed` : v >= target ? `${moneyFmt(v, src)} saved so far · target reached`
+      : `${moneyFmt(v, src)} saved so far · ${moneyFmt(target - v, src)} to go`),
     targetFor(src, opts, per) {
       const p = projectOf(src, opts);
       if (!p) return 0;

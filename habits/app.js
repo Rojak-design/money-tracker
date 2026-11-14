@@ -130,20 +130,30 @@ function doneDays(h, from, to) {
 //         'open'     today is in it and it's not decided yet (not counted)
 //         'partial'  the first period began before the start date and wasn't met (not counted)
 // Some linked rules work out each period's target themselves (e.g. what's needed to pay off a loan in time).
+// Rules that compare balances (wholePeriod) always measure a whole week / month / pay cycle, from the balance at
+// the end of the day before it began; when that balance isn't known (the accounts were added part-way through),
+// the period isn't counted (nodata). They're also judged only when the period ends (judgeAtEnd): a pay cycle
+// starts high on payday and goes down as money is spent.
 function periods(h, t = today()) {
   const out = [];
   const first = firstDay(h), r = ruleOf(h), limit = atMost(h);
   if (!started(h, t) || first > t) return out;
+  const whole = !!(r && r.wholePeriod && ruleReady(r));
+  const known = whole && r.dataStart ? r.dataStart(src, h.rule) : '';
   for (let p = spanOf(h, first); p.start <= t; p = spanOf(h, addDays(p.end, 1))) {
-    const value = measure(h, p.start < first ? first : p.start, p.end < t ? p.end : t).value;
+    const nodata = whole && p.start < known;
+    const value = nodata ? 0 : measure(h, whole || p.start >= first ? p.start : first, p.end < t ? p.end : t).value;
     const target = r && r.targetFor && ruleReady(r) ? r.targetFor(src, h.rule, p) : targetOf(h);
     let status;
-    if (limit) status = value > target ? (p.start < first ? 'partial' : 'missed') : p.end >= t ? 'open' : 'met';
+    if (nodata) status = 'partial';
+    else if (limit) status = value > target ? (p.start < first ? 'partial' : 'missed') : p.end >= t ? 'open' : 'met';
+    else if (r && r.judgeAtEnd && p.end >= t) status = 'open';
+    else if (whole) status = value >= target ? 'met' : 'missed';
     else if (value >= target) status = 'met';
     else if (p.end >= t) status = 'open';
     else if (p.start < first) status = 'partial';
     else status = 'missed';
-    out.push(Object.assign({}, p, { value, target, status }));
+    out.push(Object.assign({}, p, { value, target, status, nodata }));
   }
   return out;
 }
@@ -205,12 +215,19 @@ function progressLine(h, st, t) {
   if (h.freq === 'daily') return `<div class="progress-line">${p.status === 'met' ? '<strong>Done today ✓</strong>' : 'Not done yet today'}</div>`;
   const left = daysBetween(t, p.end);
   const word = `this ${periodWord(h)}${usesCycles(h) ? ` (${shortDate(p.start)} – ${shortDate(p.end)})` : ''}`;
-  const limit = atMost(h), over = limit && p.value > p.target;
-  const tail = over ? ' · over the limit' : p.status === 'met' ? ' · target met ✓' : left > 0 ? ` · ${plural(left, 'day', 'days')} left` : ' · last day';
-  const pct = p.target > 0 ? Math.max(0, Math.min(100, Math.round((p.value / p.target) * 100))) : p.status === 'met' ? 100 : 0;
   const r = ruleOf(h), extra = r && r.extra && ruleReady(r) ? r.extra(src, h.rule, t) : '';
-  return `<div class="progress-line${over ? ' over' : ''}"><strong>${esc(progressText(h, p.value, p.target))}</strong> ${esc(word)}${tail}${p.start < firstDay(h) ? ` <span class="muted">(started part-way through the ${periodWord(h)})</span>` : ''}</div>
-    <div class="bar${limit ? ' limit' : ''}${over ? ' over' : ''}"><div style="width:${pct}%"></div></div>${extra ? `<div class="extra-line">${esc(extra)}</div>` : ''}`;
+  if (p.nodata) {
+    return `<div class="progress-line muted">Not tracked ${esc(word)}: ${esc(r.noDataWhy ? r.noDataWhy(src, h.rule, p) : 'there\'s no data from its start')}. Tracking starts with the next ${periodWord(h)} (from ${esc(shortDate(addDays(p.end, 1)))}).</div>${extra ? `<div class="extra-line">${esc(extra)}</div>` : ''}`;
+  }
+  const limit = atMost(h), over = limit && p.value > p.target;
+  // Judged when the period ends (savings): what's saved so far and how much can still be spent, or how far short.
+  const atEnd = r && r.judgeAtEnd && p.status === 'open', short = atEnd && p.value < p.target;
+  const until = left > 0 ? ` · ${plural(left, 'day', 'days')} left` : ' · last day';
+  const tail = over ? ' · over the limit' : atEnd ? (usesCycles(h) ? until : ` until ${shortDate(p.end)}${until}`) : p.status === 'met' ? ' · target met ✓' : until;
+  const pct = p.target > 0 ? Math.max(0, Math.min(100, Math.round((p.value / p.target) * 100))) : p.status === 'met' ? 100 : 0;
+  const text = atEnd && r.soFar ? r.soFar(p.value, p.target, src, h.rule) : progressText(h, p.value, p.target);
+  return `<div class="progress-line${over || short ? ' over' : ''}"><strong>${esc(text)}</strong> ${esc(word)}${tail}${p.start < firstDay(h) && !(r && r.wholePeriod) ? ` <span class="muted">(started part-way through the ${periodWord(h)})</span>` : ''}</div>
+    <div class="bar${limit ? ' limit' : ''}${over || short ? ' over' : ''}"><div style="width:${pct}%"></div></div>${extra ? `<div class="extra-line">${esc(extra)}</div>` : ''}`;
 }
 function statsHtml(h, st) {
   const u = periodWord(h), us = u === 'pay cycle' ? 'pay cycles' : u + 's';
@@ -279,6 +296,7 @@ function yearRow(h, st, t) {
     let cls = 'mo', what;
     if (key < firstMonth) { cls += ' before'; what = 'before the start date'; }
     else if (key > nowMonth) { cls += ' future'; what = 'not yet'; }
+    else if (p && p.nodata) { cls += ' nodata'; what = 'not tracked (no balance from before it began)'; }
     else if (p && p.status === 'met') { cls += ' on'; what = `target met (${progressText(h, p.value, p.target)})`; }
     else { what = p ? progressText(h, p.value, p.target) : ''; if (p && p.status === 'missed' && atMost(h)) cls += ' over'; }
     if (key === nowMonth) cls += ' now';
@@ -366,7 +384,7 @@ function monthSheet(id, ym) {
     const r = ruleOf(h);
     if (isLinked(h)) {
       openSheet(`${h.name} · ${monthName(ym, 'long')}`, p ? `
-        <p style="margin-top:0"><strong>${esc(progressText(h, p.value, p.target))}</strong>${p.status === 'met' ? ' — target met ✓' : p.status === 'open' ? ' so far' : p.status === 'partial' ? ' (first, part-way month: not counted)' : ' — missed'}</p>
+        <p style="margin-top:0"><strong>${esc(progressText(h, p.value, p.target))}</strong>${p.status === 'met' ? ' — target met ✓' : p.status === 'open' ? ' so far' : p.status === 'partial' ? (p.nodata ? ` — not tracked: ${r && r.noDataWhy ? r.noDataWhy(src, h.rule, p) : 'no data from its start'}` : ' (first, part-way month: not counted)') : ' — missed'}</p>
         <p class="muted small">${esc(shortDate(p.start))} – ${esc(niceDate(p.end, true))}${p.word ? ` (${esc(p.word)})` : ''}. Checked automatically from ${esc(r ? r.moduleName : 'another module')}.</p>
         <button class="btn" type="button" data-close>Done</button>` : '<p class="muted">Nothing for this month.</p>');
       return;
