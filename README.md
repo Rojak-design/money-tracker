@@ -4,6 +4,7 @@ Rojak is a home screen that links to separate mini apps (modules): Money, Fitnes
 installed on your home screen. Plain HTML, CSS and JavaScript — no build step. **All data stays on your phone.**
 
 ## Home screen
+- **Water** (not a module — five bottles in a white card at the top): tap where you want the water to reach — the lower half of a bottle fills it halfway, the upper half fills it to the top. Bottles fill left to right; tapping the last bottle at the level it's already at empties it (to undo a mistap). The water is this month's hair colour; underneath it says e.g. "2½ of 5", and when all five are full the bottles bounce and a few sparkles pop. Each day starts at 0 (also when the app is left open past midnight); earlier days stay saved in the shared store under `mod:water` (`days: {date, bottles}`, bottles in halves) and are in the backup.
 - **Money** card: what you spent today and your net total (the same total as on the Accounts screen: bank accounts minus the card bills due this month / pay cycle). Tap it to open the money tracker.
 - **Fitness** card: this week's sessions by category, your latest record (a new best lift or fastest run) and your latest recovery score. Tap it to open Fitness.
 - **Habits** card: **Today** — daily habits done today (and which are still to do); **At risk** — weekly and monthly habits that may not make it this week, month or pay cycle, with up to 4 listed (red when they can't any more): counts where what's still needed is about as many days as are left, limits already over or at 90% / on pace to go over, savings below the target, and loan payments still due in the last week of the month. Tap it to open Habits.
@@ -15,7 +16,7 @@ installed on your home screen. Plain HTML, CSS and JavaScript — no build step.
   - **Delete saved screenshots**: bank screenshots saved by earlier versions of Money stay on the phone until you delete them here (shown only when there are some).
   - **Delete all data**: deletes every module's data (asks twice; can be undone, except screenshots).
   - A module screen left open while you restore or delete reloads with the new data instead of saving its old data over it.
-- She and her cat peek over the top of the Money card. Every month her hair colour changes and the cat is a different breed (Siamese, Scottish Fold, Orange tabby, Persian, Calico, Maine Coon, Russian Blue, Bengal, Sphynx, Black cat, Tuxedo, Ragdoll). Each time you open the app she waves and blinks while the cat swishes its tail; tap either one to see it again. With Reduce Motion turned on, they stay still. The browser tab shows her with this month's hair; the icon on your phone's home screen stays teal (phones don't let a web app change it after it's installed).
+- She and her cat peek over the top of the first card (the water bottles). Every month her hair colour changes and the cat is a different breed (Siamese, Scottish Fold, Orange tabby, Persian, Calico, Maine Coon, Russian Blue, Bengal, Sphynx, Black cat, Tuxedo, Ragdoll). Each time you open the app she waves and blinks while the cat swishes its tail; tap either one to see it again. With Reduce Motion turned on, they stay still. The browser tab shows her with this month's hair; the icon on your phone's home screen stays teal (phones don't let a web app change it after it's installed).
 
 ## Shared data store
 The home screen and every module save through one store (`core/store.js`). Every entry (account, transaction,
@@ -83,6 +84,7 @@ Violet, so it's easy to tell apart from Money and Fitness.
   - **Money – save for a savings project**: for projects whose savings are an account's balance: how much that account went up each month (measured and judged like Amount saved) against the project's fixed monthly amount, or (other plans) what's still to pay less what's saved, spread evenly over the months until its costs are due.
   - **Money – no-spend days**: days with no day-to-day spending on any account or card (recurring bills, card bill payments and own transfers don't count against you), counted once the day is over.
   - **Money – days you logged entries or reconciled**: e.g. log spending on 5 days a week, or reconcile once a week.
+  - **Water – bottles of water a day**: from the bottles on the home screen, e.g. "Drink at least 5 bottles a day" (target up to 5, in halves). Checked over each **day**: a day is done (filled in on the calendar) when you reached the target; it counts with the daily habits on the home screen's Habits card.
   - New rules (for future modules) are added in `habits/rules.js`: one entry each, described at the top of that file.
 
 Saved in the shared store under `mod:habits`, every entry with a date: `habits` (`{name, kind: 'manual'|'linked', freq: daily|weekly|monthly, target, date (start date), rule (linked: {id, …choices such as cats or accounts})}`), `checks` (`{habitId, date}`, one per day ticked).
@@ -108,6 +110,7 @@ On iPhone, the home-screen app and Safari keep separate data — use the home-sc
 - `core/store.js` – the shared data store (IndexedDB), entry dates, backup export / restore / undo / delete for the whole app
 - `core/avatar.js` – her drawing, its monthly hair colours and her waving hand
 - `core/cat.js` – the cat and its monthly breeds
+- `core/water.js` – the water bottles on the home screen
 - `money/` – the money tracker: `index.html`, `style.css`, `app.js` (accounts, transactions, categories, reconciliation, settings), `plan.js` (recurring payments, savings projects, trips and the forecast)
 - `fitness/` – the fitness module: `index.html`, `style.css`, `app.js` (calendar and categories, records, body measurements, recovery), `import.js` (reading screenshots)
 - `habits/` – the habits module: `index.html`, `style.css`, `app.js` (the Habits screen: list, calendars, forms), `engine.js` (periods, progress, streaks and "at risk", shared with the home screen), `rules.js` (linked-habit rules that read other modules' data)

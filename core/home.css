@@ -131,3 +131,36 @@ main { padding: 0 16px; max-width: 640px; margin: 0 auto; }
 
 /* Money card: pale teal fields, like the money tracker (Fitness and Habits use their own colours) */
 #moneyCard .stat { background: var(--primary-soft); }
+
+/* ---------- Water tracker (core/water.js): five bottles in a white card, above the module cards ---------- */
+:root { --wb-empty: #e3e8ec; --wb-line: #4a525c; --wb-lid: #c9d0d6; --wb-band: #eef1f4; }
+@media (prefers-color-scheme: dark) { :root { --wb-empty: #2c353b; --wb-line: #9aa5b1; --wb-lid: #4a545c; --wb-band: #5d6871; } }
+.water-card { position: relative; padding: 14px 10px 10px; }
+.bottles { display: flex; justify-content: space-around; }
+.bottle {
+  border: 0; padding: 0; margin: 0; background: none; cursor: pointer; line-height: 0;
+  width: 40px; height: 92px; -webkit-tap-highlight-color: transparent; transform-origin: 50% 100%;
+}
+.bottle svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.wb-empty { fill: var(--wb-empty); }
+.wb-line { fill: none; stroke: var(--wb-line); stroke-width: 1.2; }
+.wb-band { fill: var(--wb-band); stroke: var(--wb-line); stroke-width: 1.1; }
+.wb-lid { fill: var(--wb-lid); stroke: var(--wb-line); stroke-width: 1.2; stroke-linejoin: round; }
+.wb-loop-o { fill: none; stroke: var(--wb-line); stroke-width: 4.6; stroke-linecap: round; }
+.wb-loop { fill: none; stroke: var(--wb-band); stroke-width: 2.4; stroke-linecap: round; }
+.wb-shine { stroke: #fff; stroke-width: 2.6; stroke-linecap: round; opacity: .35; }
+.bottle.filled .wb-shine { opacity: .55; }
+.water-count { text-align: center; margin-top: 6px; }
+/* A full bottle gives a little hop; tapping out of order gives a tiny wiggle; all five: a bouncing wave. */
+.bottle.pop { animation: wb-pop .45s ease-out; }
+.bottle.wiggle { animation: wb-wiggle .35s ease-in-out; }
+.bottle.cheer { animation: wb-cheer .6s ease-out both; }
+@keyframes wb-pop { 0% { transform: scale(1, 1); } 35% { transform: scale(1.06, .95); } 70% { transform: scale(.98, 1.03); } 100% { transform: none; } }
+@keyframes wb-wiggle { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-5deg); } 75% { transform: rotate(5deg); } }
+@keyframes wb-cheer { 0% { transform: none; } 30% { transform: translateY(-12px) scale(1.04); } 55% { transform: none; } 75% { transform: translateY(-4px); } 100% { transform: none; } }
+.sparkle {
+  position: absolute; pointer-events: none; font-size: 16px; color: #f5c331; transform: translate(-50%, -50%) scale(0);
+  animation: wb-spark .9s ease-out both;
+}
+@keyframes wb-spark { 0% { transform: translate(-50%, -50%) scale(0) rotate(0); opacity: 0; } 40% { transform: translate(-50%, -50%) scale(1.3) rotate(40deg); opacity: 1; } 100% { transform: translate(-50%, -80%) scale(.6) rotate(90deg); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .bottle, .sparkle { animation: none !important; } }
