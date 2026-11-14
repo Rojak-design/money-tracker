@@ -73,7 +73,12 @@ Violet, so it's easy to tell apart from Money and Fitness.
 - Each habit shows its **streak** (days, weeks or months in a row that met the target; today / this week / this month only counts once it's met, and isn't a miss until it's over), its **best** streak and **Done %** (periods met ÷ periods finished since the start date). Weekly and monthly habits also show this week's or month's progress, e.g. "2 of 3 this week".
 - Weeks run Monday to Sunday; months are calendar months. When the start date falls part-way through a week or month, that first week or month counts if you met the target but isn't held against you if you didn't.
 
-Saved in the shared store under `mod:habits`, every entry with a date: `habits` (`{name, kind: 'manual', freq: daily|weekly|monthly, target, date (start date)}`), `checks` (`{habitId, date}`, one per day ticked).
+- **Manual or Linked**: when adding a habit, choose **Manual** (you tick it) or **Linked** (checked automatically from another module's data — Habits only reads it, never changes it). For a linked habit pick the module, what to measure, which items count, the target, **week** (Mon–Sun) or **month**, and the start date; leave the name empty for one like "Run 3× a week". Linked habits use the same calendar or 12-square designs (days that counted are filled in) and show progress toward the target, e.g. "2 of 3 runs this week". They can't be ticked by hand.
+  - **Fitness – sessions in chosen categories**: every session on the Fitness calendar in the categories you tick (**🏃‍♀️ Runs** ticks Easy run, Tempo, Intervals, Long run and Race), e.g. "Run at least 3 times a week".
+  - **Money – amount saved**: how much the bank accounts you tick went up: their total at the end of the week or month minus their total at the end of the one before (worked out like the Accounts screen; entries dated after today don't count yet). Card bill payments and money moved to other accounts lower it, money moved in raises it, moves between two ticked accounts cancel out, and spending on a credit card only counts once the bill is paid. With a payday set in Money, a month is a pay cycle named after the month the pay comes in (25 Nov – 24 Dec is November, even when the payday is moved to the Friday before a weekend). Weeks and months before the accounts' start dates are greyed out. Tap a month to see its amount and dates.
+  - New rules (for future modules) are added in `habits/rules.js`: one entry each, described at the top of that file.
+
+Saved in the shared store under `mod:habits`, every entry with a date: `habits` (`{name, kind: 'manual'|'linked', freq: daily|weekly|monthly, target, date (start date), rule (linked: {id, …choices such as cats or accounts})}`), `checks` (`{habitId, date}`, one per day ticked).
 
 ## Publish with GitHub Pages
 1. On GitHub, open this repository → **Settings** → **Pages**.
@@ -98,7 +103,7 @@ On iPhone, the home-screen app and Safari keep separate data — use the home-sc
 - `core/cat.js` – the cat and its monthly breeds
 - `money/` – the money tracker: `index.html`, `style.css`, `app.js` (accounts, transactions, categories, reconciliation, settings), `plan.js` (recurring payments, savings projects, trips and the forecast)
 - `fitness/` – the fitness module: `index.html`, `style.css`, `app.js` (calendar and categories, records, body measurements, recovery), `import.js` (reading screenshots)
-- `habits/` – the habits module: `index.html`, `style.css`, `app.js` (habits, ticks, streaks and completion)
+- `habits/` – the habits module: `index.html`, `style.css`, `app.js` (habits, ticks, streaks, completion, calendars), `rules.js` (linked-habit rules that read other modules' data)
 - `money/ocr/` – Tesseract.js (Apache 2.0, licences included) for reading screenshots (Money balances and receipts, Fitness imports); loaded only when you pick a screenshot
 - `manifest.json`, `sw.js`, `rojak-icon*`, `rojak-apple-touch-icon.png` – make it installable and work offline (`icon-v2.svg`, `apple-touch-icon-v2.png` are the money tracker's own tab icon)
 

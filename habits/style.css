@@ -160,3 +160,19 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: -
   position: fixed; left: 50%; transform: translateX(-50%); z-index: 30; bottom: calc(var(--safe-b) + 96px);
   background: #222; color: #fff; padding: 10px 16px; border-radius: 20px; font-size: 14px; max-width: calc(100% - 32px); text-align: center;
 }
+
+/* ---------- Linked habits ---------- */
+.tick.auto { cursor: default; color: var(--muted); font-size: 18px; border-style: dashed; }
+.tick.auto.on { color: #fff; border-style: solid; font-size: 22px; }
+.sq.auto { cursor: default; }
+.warn-line { font-size: 13px; color: var(--danger); margin-top: 6px; }
+.chips-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: -4px; }
+.mini-btn { border: 1px solid var(--line); background: var(--card); color: var(--primary); border-radius: 8px; padding: 6px 10px;
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.pick-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.pick-chip { flex-direction: row; align-items: center; gap: 0; font-weight: 500; font-size: 14px; cursor: pointer; }
+.pick-chip input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.pick-chip span { border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; background: var(--card); }
+.pick-chip input:checked + span { background: var(--primary-soft); border-color: var(--primary); color: var(--primary); font-weight: 600; }
+.pick-chip input:focus-visible + span { outline: 2px solid var(--primary); }
+#lTarget { width: 110px; }
