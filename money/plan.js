@@ -197,7 +197,7 @@ function renderRecurring() {
   // How a recurring amount is shown: + for income, − for spending, ⇄ for a transfer between your accounts.
   const shownAmt = (r, amt) => (r.type === 'transfer' ? `⇄ ${money(amt)}` : money(r.type === 'income' ? amt : -amt, true));
 
-  let html = filterHtml + `<div class="tiles">
+  let html = filterHtml + dueCardHtml() + `<div class="tiles">
     <div class="tile"><div class="label">Recurring spending</div><div class="value">${money(perMonth('expense'))}</div><div class="label">per month (approx.)</div></div>
     <div class="tile"><div class="label">Recurring income</div><div class="value">${money(perMonth('income'))}</div><div class="label">per month (approx.)</div></div>
   </div>`;
@@ -223,8 +223,9 @@ function renderRecurring() {
   };
   html += `<h2 class="section-title">Active</h2><div class="list">${active.map(item).join('') || '<div class="empty">Nothing active.</div>'}</div>`;
   if (done.length) html += `<h2 class="section-title">Finished</h2><div class="list">${done.map(item).join('')}</div>`;
-  if (!list.length) html = filterHtml + `<div class="empty">No recurring payments on this account.</div>`;
+  if (!list.length) html = filterHtml + dueCardHtml() + `<div class="empty">No recurring payments on this account.</div>`;
   el.innerHTML = html;
+  bindDueCard(el);
   const fsel = $('#recAccFilter');
   fsel.value = recAccFilter;
   fsel.addEventListener('change', (e) => { recAccFilter = e.target.value; renderRecurring(); });
@@ -437,6 +438,89 @@ function recurringSheet(id) {
       toast('Deleted');
     });
   }
+}
+
+/* ---------- Reminders: recurring payments that are due but not logged ---------- */
+// A payment counts as logged when a transaction linked to it (or, for a transfer, a transfer between the same
+// two accounts for the same amount) is dated within half a period of its date. Reminders start from when they
+// were first shown (looking back 14 days then), so old payments from before don't all come up at once.
+const HALF_PERIOD = { weekly: 3, fortnightly: 7, monthly: 14, quarterly: 45, yearly: 180 };
+function remindFrom() {
+  if (!state.settings.remindFrom) state.settings.remindFrom = addDaysISO(today(), -14);
+  return state.settings.remindFrom;
+}
+// Payments from `from` to `to` that aren't logged or skipped: [{r, d, i, amount, key}], oldest first.
+function unloggedRecurring(from, to) {
+  const out = [];
+  for (const r of state.recurring) {
+    const occ = occurrencesIdx(r, from > r.start ? from : r.start, to);
+    if (!occ.length) continue;
+    const half = HALF_PERIOD[r.freq] || 14;
+    const used = new Set();
+    const cands = r.type === 'transfer'
+      ? state.transactions.filter((x) => x.transferId && x.type === 'expense' && x.accountId === r.accountId
+        && state.transactions.some((y) => y.transferId === x.transferId && y.type === 'income' && y.accountId === r.toAccountId))
+      : state.transactions.filter((x) => x.recurringId === r.id);
+    for (const o of occ) {
+      const key = r.id + '|' + o.d;
+      if ((r.skipped || []).includes(o.d)) continue;
+      const amount = nthAmount(r, o.i);
+      const hit = cands.find((x) => !used.has(x.id) && Math.abs(daysBetween(o.d, x.date)) <= half
+        && (r.type !== 'transfer' || x.amount === amount));
+      if (hit) { used.add(hit.id); continue; }
+      out.push({ r, d: o.d, i: o.i, amount, key });
+    }
+  }
+  return out.sort((a, b) => a.d.localeCompare(b.d) || a.r.name.localeCompare(b.r.name));
+}
+const dueToLog = () => unloggedRecurring(remindFrom(), today());
+
+// Log one: opens Add transaction (or Transfer) filled in with its amount and date.
+function logDue(rid, d) {
+  const r = state.recurring.find((x) => x.id === rid);
+  if (!r) return;
+  const o = occurrencesIdx(r, d, d)[0];
+  const amount = nthAmount(r, o ? o.i : 0);
+  if (r.type === 'transfer') return transferSheet({ fromId: r.accountId, toId: r.toAccountId, amount, note: r.name, date: d });
+  txSheet(null, { type: r.type, amount, category: r.category, accountId: r.accountId, recurringId: r.id, note: r.name, date: d });
+}
+async function skipDue(items) {
+  for (const { r, d } of items) (r.skipped ||= []).includes(d) || r.skipped.push(d);
+  await save(); render();
+}
+// The "To log" card (Accounts screen and Plan → Recurring).
+function dueCardHtml() {
+  const due = dueToLog();
+  if (!due.length) return '';
+  const sign = (x) => (x.r.type === 'transfer' ? `⇄ ${money(x.amount)}` : money(x.r.type === 'income' ? x.amount : -x.amount, true));
+  return `<div class="card due-card">
+    <div class="due-head"><strong>🔔 To log · ${due.length} recurring payment${due.length > 1 ? 's' : ''} due</strong>
+      ${due.length > 1 ? '<button type="button" class="link-btn small" data-dueskipall>Skip all</button>' : ''}</div>
+    ${due.map((x) => `<div class="due-row">
+      <div class="left"><div>${esc(x.r.name)}</div><div class="muted small">${niceDate(x.d)}${accountById(x.r.accountId) && x.r.type !== 'transfer'
+        ? ` · ${isCard(x.r.accountId) ? '💳 ' : ''}${esc(accountName(x.r.accountId))}` : ''} · ${sign(x)}</div></div>
+      <button type="button" class="mini-btn" data-duelog="${x.key}">Log</button>
+      <button type="button" class="link-btn small" data-dueskip="${x.key}" aria-label="Skip — not logging this one">Skip</button>
+    </div>`).join('')}
+    <p class="muted small" style="margin:6px 0 0">Skip one you don't need to log (e.g. it was cancelled this time).</p>
+  </div>`;
+}
+function bindDueCard(el) {
+  const find = (key) => dueToLog().find((x) => x.key === key);
+  el.querySelectorAll('[data-duelog]').forEach((b) => b.addEventListener('click', () => { const [rid, d] = b.dataset.duelog.split('|'); logDue(rid, d); }));
+  el.querySelectorAll('[data-dueskip]').forEach((b) => b.addEventListener('click', () => { const x = find(b.dataset.dueskip); if (x) skipDue([x]); }));
+  el.querySelectorAll('[data-dueskipall]').forEach((b) => b.addEventListener('click', () => {
+    if (confirm('Skip all of these? They won\'t be logged or reminded about again.')) skipDue(dueToLog());
+  }));
+}
+// For notifications (the service worker can't work these out itself): what's due to log now and in the next
+// 45 days, saved with the data. Logging in the app updates it.
+function saveReminderList() {
+  const list = unloggedRecurring(remindFrom(), addDaysISO(today(), 45))
+    .map((x) => ({ key: x.key, d: x.d, name: x.r.name, amount: x.amount, type: x.r.type }));
+  const old = JSON.stringify(state.reminders || []);
+  if (old !== JSON.stringify(list)) { state.reminders = list; return true; }
+  return false;
 }
 
 /* ---------- Salary cycles ---------- */

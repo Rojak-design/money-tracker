@@ -2,7 +2,7 @@
 // When you change any app file, bump this version number AND the ?v= numbers in index.html, money/index.html,
 // fitness/index.html and habits/index.html
 // so phones get the update with all files matching.
-const VERSION = 68;
+const VERSION = 69;
 const CACHE = 'rojak-v' + VERSION;
 const FILES = [
   './',
@@ -72,4 +72,67 @@ self.addEventListener('fetch', (e) => {
       })
       .catch(() => caches.match(e.request, { ignoreSearch: true }))
   );
+});
+
+/* ---------- Reminders: recurring payments due but not logged ----------
+   The money tracker saves a list of upcoming recurring payments that aren't logged yet (state.reminders, updated
+   whenever it's opened or something is logged). A few times a day the phone wakes this helper (periodic
+   background sync, Chrome on Android with Rojak installed), and it notifies you of any that are now due —
+   each one once, and not at night. */
+function idbGet(key) {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open('money-tracker', 1);
+    open.onupgradeneeded = () => open.result.createObjectStore('kv');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const tx = open.result.transaction('kv', 'readonly');
+      const req = tx.objectStore('kv').get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    };
+  });
+}
+function idbSet(key, val) {
+  return new Promise((resolve, reject) => {
+    const open = indexedDB.open('money-tracker', 1);
+    open.onupgradeneeded = () => open.result.createObjectStore('kv');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const tx = open.result.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put(val, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    };
+  });
+}
+const pad2 = (n) => String(n).padStart(2, '0');
+async function notifyDue() {
+  const now = new Date();
+  if (now.getHours() < 8 || now.getHours() >= 22) return; // not at night
+  const state = await idbGet('state');
+  if (!state || !state.settings || !state.settings.notify) return;
+  const t = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  const due = (state.reminders || []).filter((x) => x.d <= t);
+  const told = (await idbGet('rojak:notified')) || [];
+  const fresh = due.filter((x) => !told.includes(x.key));
+  if (!fresh.length) return;
+  const cur = state.settings.currency || 'S$';
+  const amt = (x) => (x.type === 'income' ? '+' : x.type === 'transfer' ? '⇄ ' : '−') + cur + (x.amount / 100).toFixed(2);
+  await self.registration.showNotification(
+    due.length === 1 ? `Time to log: ${due[0].name}` : `${due.length} recurring payments to log`,
+    { body: due.slice(0, 5).map((x) => `${x.name} ${amt(x)}`).join('\n') + (due.length > 5 ? `\n+${due.length - 5} more` : '') + '\nTap to log them.',
+      icon: './rojak-icon-192.png', badge: './rojak-icon-192.png', tag: 'rojak-due', data: { url: './money/#due' } });
+  await idbSet('rojak:notified', [...told, ...fresh.map((x) => x.key)].slice(-500));
+}
+self.addEventListener('periodicsync', (e) => {
+  if (e.tag === 'recurring-due') e.waitUntil(notifyDue().catch(() => {}));
+});
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = new URL((e.notification.data && e.notification.data.url) || './money/', self.registration.scope).href;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((wins) => {
+    const w = wins.find((c) => c.url.includes('/money/'));
+    if (w) return w.focus().then(() => w.navigate(url)).catch(() => self.clients.openWindow(url));
+    return self.clients.openWindow(url);
+  }));
 });
