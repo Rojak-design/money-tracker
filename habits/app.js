@@ -142,10 +142,17 @@ async function toggle(h, iso) {
 
 /* ---------- Habit list ---------- */
 const DOW = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+const MONTHS = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
 function plural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
+const monthName = (ym, style = 'short') => dayDate(ym + '-01').toLocaleDateString(undefined, { month: style, year: 'numeric' });
+// The month (YYYY-MM) or year shown for each habit; this month / this year unless you've moved it.
+const shownMonth = {}, shownYear = {};
+
+// This week's or month's progress, e.g. "2 of 3 this week · 2 days left".
 function progressLine(h, st, t) {
   const p = st.current;
-  if (!p || h.freq === 'daily') return '';
+  if (!p) return '';
+  if (h.freq === 'daily') return `<div class="progress-line">${p.status === 'met' ? '<strong>Done today ✓</strong>' : 'Not done yet today'}</div>`;
   const f = freqOf(h);
   const left = daysBetween(t, p.end);
   const word = h.freq === 'weekly' ? 'this week' : 'this month';
@@ -154,31 +161,90 @@ function progressLine(h, st, t) {
   return `<div class="progress-line"><strong>${p.value} of ${p.target}</strong> ${word}${tail}${p.start < h.date ? ` <span class="muted">(started part-way through the ${f.unit})</span>` : ''}</div>
     <div class="bar"><div style="width:${pct}%"></div></div>`;
 }
-function habitCard(h, t) {
+function statsHtml(h, st) {
   const f = freqOf(h);
-  if (!started(h, t)) {
-    return `<div class="habit not-started">
-      <div class="habit-top"><button type="button" class="habit-name" data-edit="${h.id}"><div class="title">${esc(h.name)}</div><div class="sub">${esc(freqText(h))}</div></button>
-        <button type="button" class="tick" disabled aria-label="Not started yet">✓</button></div>
-      <div class="starts">Starts on ${esc(niceDate(h.date))}</div></div>`;
-  }
-  const st = stats(h, t);
+  return `<div class="stats"><span>🔥 Streak <strong>${plural(st.streak, f.unit, f.units)}</strong></span><span>Best <strong>${st.best}</strong></span>
+    <span>Done <strong>${st.pct == null ? '–' : st.pct + '%'}</strong>${st.counted ? ` (${st.met} of ${plural(st.counted, f.unit, f.units)})` : ''}</span></div>`;
+}
+
+// A month calendar, Monday to Sunday: filled squares for days done, grey before the start date. Weekly habits get
+// a ✓ at the end of each week that met its target (or "2/3" for this week so far). Tap a day to tick or untick it.
+function monthGrid(h, ym, t, opts = {}) {
   const done = doneDays(h);
-  let strip = '';
-  for (let i = 6; i >= 0; i--) {
-    const d = addDays(t, -i), before = d < h.date, on = done.has(d);
-    strip += `<button type="button" class="wday${on ? ' on' : ''}${before ? ' before' : ''}${d === t ? ' today' : ''}" data-h="${h.id}" data-d="${d}" ${before ? 'disabled' : ''}
-      aria-label="${esc(niceDate(d))}: ${before ? 'before the start date' : on ? 'done' : 'not done'}"><span>${DOW[(dayDate(d).getDay() + 6) % 7]}</span><span class="dot">${on ? '✓' : dayDate(d).getDate()}</span></button>`;
+  const weekly = h.freq === 'weekly' && !opts.big;
+  const byStart = {};
+  if (weekly) for (const p of periods(h, t)) byStart[p.start] = p;
+  const first = ym + '-01', last = addDays(addMonths(first, 1), -1);
+  let cells = DOW.map((x) => `<span class="dow">${x}</span>`).join('') + (weekly ? '<span class="dow"></span>' : '');
+  for (let ws = weekStart(first); ws <= last; ws = addDays(ws, 7)) {
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(ws, i);
+      if (d.slice(0, 7) !== ym) { cells += '<span class="sq blank"></span>'; continue; }
+      const n = +d.slice(8);
+      if (d < h.date) { cells += `<span class="sq before" aria-label="${esc(niceDate(d))}: before the start date">${opts.big ? n : ''}</span>`; continue; }
+      if (d > t) { cells += `<span class="sq future">${opts.big ? n : ''}</span>`; continue; }
+      const on = done.has(d);
+      cells += `<button type="button" class="sq${on ? ' on' : ''}${d === t ? ' today' : ''}" data-h="${h.id}" data-d="${d}"
+        aria-label="${esc(niceDate(d))}: ${on ? 'done' : 'not done'}" aria-pressed="${on}">${opts.big || d === t ? n : ''}</button>`;
+    }
+    if (weekly) {
+      const p = byStart[ws];
+      cells += p && p.status === 'met' ? '<span class="wk met" title="Target met">✓</span>'
+        : p && p.status === 'open' ? `<span class="wk open" title="This week so far">${p.value}/${p.target}</span>`
+          : '<span class="wk"></span>';
+    }
   }
-  const todayOn = done.has(t);
-  return `<div class="habit">
-    <div class="habit-top"><button type="button" class="habit-name" data-edit="${h.id}"><div class="title">${esc(h.name)}</div><div class="sub">${esc(freqText(h))}</div></button>
-      <button type="button" class="tick${todayOn ? ' on' : ''}" data-h="${h.id}" data-d="${t}" aria-pressed="${todayOn}" aria-label="${todayOn ? 'Done today (tap to undo)' : 'Tick as done today'}">✓</button></div>
-    ${progressLine(h, st, t)}
-    <div class="week-strip">${strip}</div>
-    <div class="stats"><span>🔥 Streak <strong>${plural(st.streak, f.unit, f.units)}</strong></span><span>Best <strong>${st.best}</strong></span>
-      <span>Done <strong>${st.pct == null ? '–' : st.pct + '%'}</strong>${st.counted ? ` (${st.met} of ${plural(st.counted, f.unit, f.units)})` : ''}</span></div>
-  </div>`;
+  return `<div class="grid${weekly ? ' weekly' : ''}${opts.big ? ' big' : ''}">${cells}</div>`;
+}
+// The month calendar with ‹ › (or swipe) to look at earlier months, back to the month the habit started.
+function miniMonth(h, t) {
+  const min = h.date.slice(0, 7), max = t.slice(0, 7);
+  let ym = shownMonth[h.id] || max;
+  if (ym < min) ym = min;
+  if (ym > max) ym = max;
+  return `<div class="mini" data-swipe="${h.id}">
+    <div class="mini-head"><button type="button" class="arrow" data-mm="${h.id}" data-k="-1" ${ym <= min ? 'disabled' : ''} aria-label="Earlier month">‹</button>
+      <span>${esc(monthName(ym))}</span>
+      <button type="button" class="arrow" data-mm="${h.id}" data-k="1" ${ym >= max ? 'disabled' : ''} aria-label="Later month">›</button></div>
+    ${monthGrid(h, ym, t)}</div>`;
+}
+// Monthly habits: Jan to Dec in one row, filled when the month's target was met, this month outlined.
+function yearRow(h, st, t) {
+  const min = +h.date.slice(0, 4), max = +t.slice(0, 4);
+  let y = shownYear[h.id] || max;
+  if (y < min) y = min;
+  if (y > max) y = max;
+  const byStart = {};
+  for (const p of st.periods) byStart[p.start] = p;
+  let cells = '';
+  for (let m = 1; m <= 12; m++) {
+    const s = `${y}-${pad(m)}-01`, e = FREQS.monthly.end(s), p = byStart[s];
+    const label = dayDate(s).toLocaleDateString(undefined, { month: 'long' });
+    let cls = 'mo', what;
+    if (e < h.date) { cls += ' before'; what = 'before the start date'; }
+    else if (s > t) { cls += ' future'; what = 'not yet'; }
+    else if (p && p.status === 'met') { cls += ' on'; what = `target met (${p.value} of ${p.target})`; }
+    else what = p ? `${p.value} of ${p.target}` : '';
+    if (s === FREQS.monthly.start(t)) cls += ' now';
+    const tap = !cls.includes('before') && !cls.includes('future');
+    cells += `<div class="mo-cell"><${tap ? `button type="button" data-month="${h.id}" data-s="${s}"` : 'span'} class="${cls}" aria-label="${esc(label)}: ${esc(what)}">${p && p.value && p.status !== 'met' ? p.value : ''}</${tap ? 'button' : 'span'}><span class="mo-l">${MONTHS[m - 1]}</span></div>`;
+  }
+  return `<div class="year">
+    <div class="mini-head"><button type="button" class="arrow" data-yy="${h.id}" data-k="-1" ${y <= min ? 'disabled' : ''} aria-label="Earlier year">‹</button>
+      <span>${y}</span>
+      <button type="button" class="arrow" data-yy="${h.id}" data-k="1" ${y >= max ? 'disabled' : ''} aria-label="Later year">›</button></div>
+    <div class="months">${cells}</div></div>`;
+}
+function habitCard(h, t) {
+  const head = (on, disabled) => `<div class="habit-top"><button type="button" class="habit-name" data-edit="${h.id}"><div class="title">${esc(h.name)}</div><div class="sub">${esc(freqText(h))}</div></button>
+    <button type="button" class="tick${on ? ' on' : ''}" ${disabled ? 'disabled aria-label="Not started yet"' : `data-h="${h.id}" data-d="${t}" aria-pressed="${on}" aria-label="${on ? 'Done today (tap to undo)' : 'Tick as done today'}"`}>✓</button></div>`;
+  if (!started(h, t)) return `<div class="habit not-started">${head(false, true)}<div class="starts">Starts on ${esc(niceDate(h.date))}</div></div>`;
+  const st = stats(h, t);
+  const on = isDone(h, t);
+  if (h.freq === 'monthly') {
+    return `<div class="habit">${head(on)}${yearRow(h, st, t)}${progressLine(h, st, t)}${statsHtml(h, st)}</div>`;
+  }
+  return `<div class="habit">${head(on)}<div class="habit-body">${miniMonth(h, t)}<div class="side">${progressLine(h, st, t)}${statsHtml(h, st)}</div></div></div>`;
 }
 function render() {
   const t = today();
@@ -191,8 +257,46 @@ function render() {
   // Habits that have started first, then those starting later (soonest first).
   const list = state.habits.filter((h) => started(h, t)).concat(state.habits.filter((h) => !started(h, t)).sort((a, b) => a.date.localeCompare(b.date)));
   el.innerHTML = list.map((h) => habitCard(h, t)).join('');
-  $$('[data-h]', el).forEach((b) => b.addEventListener('click', () => { const h = state.habits.find((x) => x.id === b.dataset.h); if (h) toggle(h, b.dataset.d); }));
+  const habit = (id) => state.habits.find((x) => x.id === id);
+  $$('[data-h]', el).forEach((b) => b.addEventListener('click', () => { const h = habit(b.dataset.h); if (h) toggle(h, b.dataset.d); }));
   $$('[data-edit]', el).forEach((b) => b.addEventListener('click', () => habitForm(b.dataset.edit)));
+  $$('[data-mm]', el).forEach((b) => b.addEventListener('click', () => moveMonth(b.dataset.mm, +b.dataset.k)));
+  $$('[data-yy]', el).forEach((b) => b.addEventListener('click', () => { shownYear[b.dataset.yy] = (shownYear[b.dataset.yy] || +t.slice(0, 4)) + +b.dataset.k; render(); }));
+  $$('[data-month]', el).forEach((b) => b.addEventListener('click', () => monthSheet(b.dataset.month, b.dataset.s.slice(0, 7))));
+  // Swipe a calendar left or right for the next or previous month.
+  $$('[data-swipe]', el).forEach((box) => {
+    let x0 = null, y0 = 0;
+    box.addEventListener('touchstart', (e) => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, { passive: true });
+    box.addEventListener('touchend', (e) => {
+      if (x0 == null) return;
+      const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
+      x0 = null;
+      if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) moveMonth(box.dataset.swipe, dx < 0 ? 1 : -1);
+    });
+  });
+}
+function moveMonth(id, k) {
+  const h = state.habits.find((x) => x.id === id), t = today();
+  if (!h) return;
+  const next = addMonths((shownMonth[id] || t.slice(0, 7)) + '-01', k).slice(0, 7);
+  if (next < h.date.slice(0, 7) || next > t.slice(0, 7)) return;
+  shownMonth[id] = next;
+  render();
+}
+// Monthly habits: tap a month to tick or untick its days.
+function monthSheet(id, ym) {
+  const h = state.habits.find((x) => x.id === id);
+  if (!h) return;
+  const t = today();
+  const draw = () => {
+    const p = periods(h, t).find((x) => x.start === ym + '-01');
+    openSheet(`${h.name} · ${monthName(ym, 'long')}`, `
+      <p class="muted small" style="margin-top:0">${p ? `<strong>${p.value} of ${p.target}</strong> this month${p.status === 'met' ? ' — target met ✓' : ''}` : ''}. Tap a day to tick or untick it.</p>
+      ${monthGrid(h, ym, t, { big: true })}
+      <button class="btn" type="button" data-close style="margin-top:16px">Done</button>`);
+    $$('#sheetBody [data-h]').forEach((b) => b.addEventListener('click', async () => { await toggle(h, b.dataset.d); draw(); }));
+  };
+  draw();
 }
 
 /* ---------- Add / edit a habit ---------- */

@@ -66,7 +66,9 @@ Saved in the shared store under `mod:fitness`, every entry with its own `date` (
 ## Habits module
 Violet, so it's easy to tell apart from Money and Fitness.
 - **+** adds a habit: a name, how often (**Daily**, **X times per week** or **X times per month**) and a **start date** (today unless you pick a past or future date). Tap a habit's name to edit or delete it.
-- Tick the round button for **done today**, or tap one of the last 7 days to tick or untick it. Days before the start date are greyed out and can't be ticked.
+- Tick the round button for **done today**.
+- **Daily and weekly habits** show a small month calendar (Mon–Sun): filled squares for days done, grey squares before the start date, today outlined. Tap a day to tick or untick it. Weekly habits get a green ✓ at the end of each week that met the target (and "2/3" for this week so far). Tap ‹ › or swipe the calendar to look at earlier months (back to the month the habit started).
+- **Monthly habits** show Jan to Dec in one row of 12 squares: filled when that month's target was met (a number shows how many times so far when it wasn't), this month outlined, months before the start date grey. ‹ › switches year. Tap a month to tick or untick its days.
 - A habit with a future start date shows **Starts on [date]** until then.
 - Each habit shows its **streak** (days, weeks or months in a row that met the target; today / this week / this month only counts once it's met, and isn't a miss until it's over), its **best** streak and **Done %** (periods met ÷ periods finished since the start date). Weekly and monthly habits also show this week's or month's progress, e.g. "2 of 3 this week".
 - Weeks run Monday to Sunday; months are calendar months. When the start date falls part-way through a week or month, that first week or month counts if you met the target but isn't held against you if you didn't.
