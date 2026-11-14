@@ -7,7 +7,8 @@
 
    Tapping: tap where you want the water to reach — the lower half of a bottle fills it halfway, the upper half
    fills it to the top. Bottles fill left to right. Tapping the last bottle at the level it's already at empties
-   it (to undo a mistap). The water is this month's hair colour. */
+   it (to undo a mistap). The water is this month's hair colour. Reaching all five, or the target of a Water habit
+   in Habits, makes the bottles bounce and sparkle. */
 'use strict';
 
 const Water = (() => {
@@ -70,7 +71,7 @@ const Water = (() => {
   }
   function showCount(n) {
     const el = document.querySelector('#waterCount');
-    if (el) el.textContent = n ? `${fmt(n)} of ${MAX}${n >= MAX ? ' 🎉' : ''}` : `0 of ${MAX} · tap a bottle`;
+    if (el) el.textContent = n ? `${fmt(n)} of ${MAX}${n >= MAX || goals().some((g) => n >= g) ? ' 🎉' : ''}` : `0 of ${MAX} · tap a bottle`;
   }
 
   // Tap: lower half of a bottle = half, upper half (or the lid) = full.
@@ -89,7 +90,8 @@ const Water = (() => {
     if (next === old) return;
     setCount(next); // the bottle moves straight away; saving happens in the background
     animateTo(old, next);
-    if (next >= MAX && old < MAX) celebrate();
+    // Celebrate on reaching all five, or the target of a Water habit (e.g. "Drink 2½ bottles a day").
+    if ([MAX, ...goals()].some((g) => old < g && next >= g)) celebrate();
   }
   // Saves one at a time, in order, so quick taps are all kept.
   let saving = Promise.resolve();
@@ -139,7 +141,17 @@ const Water = (() => {
     if (reduceMotion()) return;
     btn.classList.remove('wiggle'); void btn.offsetWidth; btn.classList.add('wiggle');
   }
-  // All five full: the bottles bounce one after another and a few sparkles pop.
+  // Targets of the Water habits in Habits that have started (set by the home screen).
+  let habitGoals = [];
+  const goals = () => habitGoals;
+  function setHabits(h) {
+    const t = dayNow();
+    habitGoals = ((h && h.habits) || [])
+      .filter((x) => x.kind === 'linked' && x.rule && x.rule.id === 'water.bottles' && x.date <= t && +x.target > 0 && +x.target <= MAX)
+      .map((x) => half(+x.target));
+    showCount(countOn(day));
+  }
+  // All five full (or a Water habit's target reached): the bottles bounce one after another and sparkles pop.
   function celebrate() {
     if (reduceMotion()) return;
     const el = box(), card = document.querySelector('#waterCard');
@@ -172,5 +184,5 @@ const Water = (() => {
   function checkDay() { if (dayNow() !== day) { day = dayNow(); render(); } }
   setInterval(checkDay, 60000);
 
-  return { load, render, checkDay, data: () => data };
+  return { load, render, checkDay, setHabits, data: () => data };
 })();
