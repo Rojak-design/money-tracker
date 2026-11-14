@@ -206,7 +206,8 @@ $('#exportBtn').addEventListener('click', async () => {
   }
 });
 
-function openSheet(html) {
+function openSheet(html, title = 'Restore from backup') {
+  $('#sheetTitle').textContent = title;
   $('#sheetBody').innerHTML = html;
   $('#sheet').classList.remove('hidden');
   document.body.style.overflow = 'hidden';
@@ -343,9 +344,10 @@ async function init() {
   $('#avatar').innerHTML = avatarFigure(hair);
   $('#cat').innerHTML = catSVG(cat);
   setAvatarFavicon();
-  $('#today').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+  $('#today').textContent = new Date().toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }); // short, to leave room for the weather
   $('#hairNote').textContent = `This month: ${hair.name} hair and a ${cat.name} cat. They change every month.`;
   setTimeout(hello, 350);
+  if (!init.weather) { init.weather = true; Weather.start(); }
   await refresh();
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

@@ -2,7 +2,7 @@
 // When you change any app file, bump this version number AND the ?v= numbers in index.html, money/index.html,
 // fitness/index.html and habits/index.html
 // so phones get the update with all files matching.
-const VERSION = 66;
+const VERSION = 68;
 const CACHE = 'rojak-v' + VERSION;
 const FILES = [
   './',
@@ -10,6 +10,7 @@ const FILES = [
   './core/home.css?v=' + VERSION,
   './core/store.js?v=' + VERSION,
   './core/avatar.js?v=' + VERSION,
+  './core/weather.js?v=' + VERSION,
   './core/water.js?v=' + VERSION,
   './core/cat.js?v=' + VERSION,
   './core/home.js?v=' + VERSION,
@@ -58,11 +59,12 @@ self.addEventListener('activate', (e) => {
 // changed (a quick check), so an update shows up as soon as it's published.
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
-  const sameOrigin = new URL(e.request.url).origin === location.origin;
+  // Only the app's own files: requests to other sites (e.g. the weather forecasts) go straight to the network.
+  if (new URL(e.request.url).origin !== location.origin) return;
   e.respondWith(
-    fetch(sameOrigin ? new Request(e.request.url, { cache: 'no-cache', credentials: 'same-origin' }) : e.request)
+    fetch(new Request(e.request.url, { cache: 'no-cache', credentials: 'same-origin' }))
       .then((res) => {
-        if (res.ok && new URL(e.request.url).origin === location.origin) {
+        if (res.ok) {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(e.request, copy));
         }
