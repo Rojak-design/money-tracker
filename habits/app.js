@@ -90,14 +90,15 @@ const ruleReady = (r) => !!(r && src[r.module]);
 const kindOf = (h) => (h.freq === 'weekly' ? 'week' : 'month');
 const targetOf = (h) => (isLinked(h) ? Math.max(0, +h.target || 0) : h.freq === 'daily' ? 1 : Math.max(1, +h.target || 1));
 const started = (h, t = today()) => h.date <= t;
-// Money habits with a payday set run over pay cycles instead of calendar months.
-const usesCycles = (h) => { const r = ruleOf(h); return !!(r && r.period && ruleReady(r) && h.freq === 'monthly' && r.period(src, 'month', today()).cycle); };
-const periodWord = (h) => (h.freq === 'weekly' ? 'week' : h.freq === 'daily' ? 'day' : usesCycles(h) ? 'pay cycle' : 'month');
+const atMost = (h) => { const r = ruleOf(h); return !!(r && r.atMost); };
+// What a period is called: day, week, month, or (Money) pay cycle / card statement.
+const periodWord = (h) => (h.freq === 'weekly' ? 'week' : h.freq === 'daily' ? 'day' : spanOf(h, today()).word || 'month');
+const usesCycles = (h) => periodWord(h) !== 'month' && h.freq === 'monthly';
 
 // The week / month a day is in: { start, end, month ('YYYY-MM' the period is named after) }.
 function spanOf(h, iso) {
   const r = ruleOf(h);
-  if (ruleReady(r) && r.period) return r.period(src, kindOf(h), iso);
+  if (ruleReady(r) && r.period) return r.period(src, kindOf(h), iso, h.rule);
   const f = freqOf(h), s = f.start(iso);
   return { start: s, end: f.end(s), month: s.slice(0, 7) };
 }
@@ -124,22 +125,35 @@ function doneDays(h, from, to) {
 
 // Each period from the one the habit starts in up to the one today is in:
 //   { start, end, month, value, target, status }
-// status: 'met'      the target was reached
-//         'missed'   the period is over and the target wasn't reached
-//         'open'     today is in it and the target isn't reached yet (not counted)
-//         'partial'  the first period began before the start date and the target wasn't reached (not counted)
+// status: 'met'      the target was reached (a limit: the period ended at or under it)
+//         'missed'   the period is over and the target wasn't reached (a limit: it went over, even part-way through)
+//         'open'     today is in it and it's not decided yet (not counted)
+//         'partial'  the first period began before the start date and wasn't met (not counted)
+// Some linked rules work out each period's target themselves (e.g. what's needed to pay off a loan in time).
+// Rules that compare balances (wholePeriod) always measure a whole week / month / pay cycle, from the balance at
+// the end of the day before it began; when that balance isn't known (the accounts were added part-way through),
+// the period isn't counted (nodata). They're also judged only when the period ends (judgeAtEnd): a pay cycle
+// starts high on payday and goes down as money is spent.
 function periods(h, t = today()) {
   const out = [];
-  const first = firstDay(h), target = targetOf(h);
+  const first = firstDay(h), r = ruleOf(h), limit = atMost(h);
   if (!started(h, t) || first > t) return out;
+  const whole = !!(r && r.wholePeriod && ruleReady(r));
+  const known = whole && r.dataStart ? r.dataStart(src, h.rule) : '';
   for (let p = spanOf(h, first); p.start <= t; p = spanOf(h, addDays(p.end, 1))) {
-    const value = measure(h, p.start < first ? first : p.start, p.end < t ? p.end : t).value;
+    const nodata = whole && p.start < known;
+    const value = nodata ? 0 : measure(h, whole || p.start >= first ? p.start : first, p.end < t ? p.end : t).value;
+    const target = r && r.targetFor && ruleReady(r) ? r.targetFor(src, h.rule, p) : targetOf(h);
     let status;
-    if (value >= target && target > 0) status = 'met';
+    if (nodata) status = 'partial';
+    else if (limit) status = value > target ? (p.start < first ? 'partial' : 'missed') : p.end >= t ? 'open' : 'met';
+    else if (r && r.judgeAtEnd && p.end >= t) status = 'open';
+    else if (whole) status = value >= target ? 'met' : 'missed';
+    else if (value >= target) status = 'met';
     else if (p.end >= t) status = 'open';
     else if (p.start < first) status = 'partial';
     else status = 'missed';
-    out.push(Object.assign({}, p, { value, target, status }));
+    out.push(Object.assign({}, p, { value, target, status, nodata }));
   }
   return out;
 }
@@ -162,17 +176,18 @@ function freqText(h) {
   const r = ruleOf(h);
   if (isLinked(h)) {
     if (!r) return '🔗 Linked rule not found';
-    return `${r.icon} ${r.format(targetOf(h), src, h.rule)} a ${periodWord(h)} · from ${r.moduleName}`;
+    if (r.autoTarget) return `${r.icon} target worked out each ${periodWord(h)} · from ${r.moduleName}`;
+    return `${r.icon} ${r.atMost ? 'at most ' : ''}${r.format(targetOf(h), src, h.rule)} a ${periodWord(h)} · from ${r.moduleName}`;
   }
   if (h.freq === 'weekly') return `${targetOf(h)}× a week`;
   if (h.freq === 'monthly') return targetOf(h) === 1 ? 'Once a month' : `${targetOf(h)}× a month`;
   return 'Daily';
 }
 // "2 of 3 runs", "S$1,240 of S$2,000 saved", "2 of 3".
-function progressText(h, value) {
+function progressText(h, value, target = targetOf(h)) {
   const r = ruleOf(h);
-  if (r) return r.progress(value, targetOf(h), src, h.rule);
-  return `${value} of ${targetOf(h)}`;
+  if (r) return r.progress(value, target, src, h.rule);
+  return `${value} of ${target}`;
 }
 
 /* ---------- Ticking ---------- */
@@ -200,10 +215,19 @@ function progressLine(h, st, t) {
   if (h.freq === 'daily') return `<div class="progress-line">${p.status === 'met' ? '<strong>Done today ✓</strong>' : 'Not done yet today'}</div>`;
   const left = daysBetween(t, p.end);
   const word = `this ${periodWord(h)}${usesCycles(h) ? ` (${shortDate(p.start)} – ${shortDate(p.end)})` : ''}`;
-  const tail = p.status === 'met' ? ' · target met ✓' : left > 0 ? ` · ${plural(left, 'day', 'days')} left` : ' · last day';
-  const pct = p.target > 0 ? Math.max(0, Math.min(100, Math.round((p.value / p.target) * 100))) : 0;
-  return `<div class="progress-line"><strong>${esc(progressText(h, p.value))}</strong> ${esc(word)}${tail}${p.start < firstDay(h) ? ` <span class="muted">(started part-way through the ${periodWord(h)})</span>` : ''}</div>
-    <div class="bar"><div style="width:${pct}%"></div></div>`;
+  const r = ruleOf(h), extra = r && r.extra && ruleReady(r) ? r.extra(src, h.rule, t) : '';
+  if (p.nodata) {
+    return `<div class="progress-line muted">Not tracked ${esc(word)}: ${esc(r.noDataWhy ? r.noDataWhy(src, h.rule, p) : 'there\'s no data from its start')}. Tracking starts with the next ${periodWord(h)} (from ${esc(shortDate(addDays(p.end, 1)))}).</div>${extra ? `<div class="extra-line">${esc(extra)}</div>` : ''}`;
+  }
+  const limit = atMost(h), over = limit && p.value > p.target;
+  // Judged when the period ends (savings): what's saved so far and how much can still be spent, or how far short.
+  const atEnd = r && r.judgeAtEnd && p.status === 'open', short = atEnd && p.value < p.target;
+  const until = left > 0 ? ` · ${plural(left, 'day', 'days')} left` : ' · last day';
+  const tail = over ? ' · over the limit' : atEnd ? (usesCycles(h) ? until : ` until ${shortDate(p.end)}${until}`) : p.status === 'met' ? ' · target met ✓' : until;
+  const pct = p.target > 0 ? Math.max(0, Math.min(100, Math.round((p.value / p.target) * 100))) : p.status === 'met' ? 100 : 0;
+  const text = atEnd && r.soFar ? r.soFar(p.value, p.target, src, h.rule) : progressText(h, p.value, p.target);
+  return `<div class="progress-line${over || short ? ' over' : ''}"><strong>${esc(text)}</strong> ${esc(word)}${tail}${p.start < firstDay(h) && !(r && r.wholePeriod) ? ` <span class="muted">(started part-way through the ${periodWord(h)})</span>` : ''}</div>
+    <div class="bar${limit ? ' limit' : ''}${over || short ? ' over' : ''}"><div style="width:${pct}%"></div></div>${extra ? `<div class="extra-line">${esc(extra)}</div>` : ''}`;
 }
 function statsHtml(h, st) {
   const u = periodWord(h), us = u === 'pay cycle' ? 'pay cycles' : u + 's';
@@ -236,7 +260,8 @@ function monthGrid(h, ym, t, opts = {}) {
     if (weekly) {
       const p = byStart[ws];
       cells += p && p.status === 'met' ? '<span class="wk met" title="Target met">✓</span>'
-        : p && p.status === 'open' && Number.isInteger(p.value) && p.target < 100 ? `<span class="wk open" title="This week so far">${p.value}/${p.target}</span>`
+        : p && p.status === 'missed' && atMost(h) ? '<span class="wk over" title="Over the limit">✕</span>'
+        : p && p.status === 'open' && !atMost(h) && Number.isInteger(p.value) && p.target < 100 ? `<span class="wk open" title="This week so far">${p.value}/${p.target}</span>`
           : '<span class="wk"></span>';
     }
   }
@@ -271,8 +296,9 @@ function yearRow(h, st, t) {
     let cls = 'mo', what;
     if (key < firstMonth) { cls += ' before'; what = 'before the start date'; }
     else if (key > nowMonth) { cls += ' future'; what = 'not yet'; }
-    else if (p && p.status === 'met') { cls += ' on'; what = `target met (${progressText(h, p.value)})`; }
-    else what = p ? progressText(h, p.value) : '';
+    else if (p && p.nodata) { cls += ' nodata'; what = 'not tracked (no balance from before it began)'; }
+    else if (p && p.status === 'met') { cls += ' on'; what = `target met (${progressText(h, p.value, p.target)})`; }
+    else { what = p ? progressText(h, p.value, p.target) : ''; if (p && p.status === 'missed' && atMost(h)) cls += ' over'; }
     if (key === nowMonth) cls += ' now';
     const tap = !cls.includes('before') && !cls.includes('future');
     const inner = !isLinked(h) && p && p.value && p.status !== 'met' ? p.value : '';
@@ -358,8 +384,8 @@ function monthSheet(id, ym) {
     const r = ruleOf(h);
     if (isLinked(h)) {
       openSheet(`${h.name} · ${monthName(ym, 'long')}`, p ? `
-        <p style="margin-top:0"><strong>${esc(progressText(h, p.value))}</strong>${p.status === 'met' ? ' — target met ✓' : p.status === 'open' ? ' so far' : p.status === 'partial' ? ' (first, part-way month: not counted)' : ' — missed'}</p>
-        <p class="muted small">${esc(shortDate(p.start))} – ${esc(niceDate(p.end, true))}${usesCycles(h) ? ' (pay cycle)' : ''}. Checked automatically from ${esc(r ? r.moduleName : 'another module')}.</p>
+        <p style="margin-top:0"><strong>${esc(progressText(h, p.value, p.target))}</strong>${p.status === 'met' ? ' — target met ✓' : p.status === 'open' ? ' so far' : p.status === 'partial' ? (p.nodata ? ` — not tracked: ${r && r.noDataWhy ? r.noDataWhy(src, h.rule, p) : 'no data from its start'}` : ' (first, part-way month: not counted)') : ' — missed'}</p>
+        <p class="muted small">${esc(shortDate(p.start))} – ${esc(niceDate(p.end, true))}${p.word ? ` (${esc(p.word)})` : ''}. Checked automatically from ${esc(r ? r.moduleName : 'another module')}.</p>
         <button class="btn" type="button" data-close>Done</button>` : '<p class="muted">Nothing for this month.</p>');
       return;
     }
@@ -423,7 +449,7 @@ function habitForm(id) {
         <div id="lOpts" class="form"></div>
         <div class="label-t">Over each</div>
         <div class="seg" id="lPeriod"></div>
-        <div class="times"><span>At least</span><input id="lTarget" type="number" inputmode="decimal" min="0" step="any"><span id="lUnit"></span></div>
+        <div class="times" id="lTargetRow"><span id="lDir">At least</span><input id="lTarget" type="number" inputmode="decimal" min="0" step="any"><span id="lUnit"></span></div>
       </div>
       <label>Start date<input id="hStart" type="date" required value="${esc(ex ? ex.date : today())}">
         <span class="hint">Today, or pick a past or future date. Days before it are greyed out and don't count against your streak or completion.</span></label>
@@ -449,14 +475,19 @@ function habitForm(id) {
   };
   // Linked: the module's rules, the rule's choices, its periods and the target's unit.
   const readOpts = () => { const o = rule.readOptions($('#lOpts'), src); return typeof o === 'string' ? null : o; };
+  // 'pay cycle' / 'statement' when the rule's months are those, otherwise 'week' / 'month'.
+  const wordFor = (p, o) => (p === 'month' && rule.period && src[rule.module] && rule.period(src, 'month', today(), o || readOpts() || {}).word) || p;
   const showUnit = () => {
     const o = readOpts() || ropts || {};
     $('#lUnit').textContent = rule.targetLabel(o, src);
+    $('#lDir').textContent = rule.atMost ? 'At most' : 'At least';
+    $('#lTargetRow').classList.toggle('hidden', !!rule.autoTarget);
     const t = +$('#lTarget').value;
-    $('#hName').placeholder = o && t > 0 ? `Leave empty for “${rule.defaultName(o, t, period === 'month' && rule.period && src[rule.module] && rule.period(src, 'month', today()).cycle ? 'pay cycle' : period, src)}”` : '';
+    $('#hName').placeholder = readOpts() && (t > 0 || rule.autoTarget) ? `Leave empty for “${rule.defaultName(readOpts(), t, wordFor(period), src)}”` : '';
+    $$('#lPeriod button').forEach((b) => { if (b.dataset.p === 'month') b.textContent = wordFor('month') === 'month' ? 'Month' : `Month (${wordFor('month')})`; });
   };
   const showPeriod = () => {
-    $('#lPeriod').innerHTML = rule.periods.map((p) => `<button type="button" data-p="${p}" class="${p === period ? 'on' : ''}">${p === 'week' ? 'Week (Mon–Sun)' : rule.period && src[rule.module] && rule.period(src, 'month', today()).cycle ? 'Month (pay cycle)' : 'Month'}</button>`).join('');
+    $('#lPeriod').innerHTML = rule.periods.map((p) => `<button type="button" data-p="${p}" class="${p === period ? 'on' : ''}">${p === 'week' ? 'Week (Mon–Sun)' : 'Month'}</button>`).join('');
     $$('#lPeriod button').forEach((b) => b.addEventListener('click', () => { period = b.dataset.p; if (!targetTouched) $('#lTarget').value = rule.defaultTarget[period]; showPeriod(); }));
     showUnit();
   };
@@ -500,10 +531,10 @@ function habitForm(id) {
       if (!src[rule.module] || (rule.unavailable && rule.unavailable(src))) return toast($('#lUnavailable').textContent || `Nothing saved in ${rule.moduleName} yet`);
       const o = rule.readOptions($('#lOpts'), src);
       if (typeof o === 'string') return toast(o);
-      const target = Math.round(+$('#lTarget').value * 100) / 100;
-      if (!(target > 0)) return toast('Set a target above 0');
+      const target = rule.autoTarget ? 0 : Math.round(+$('#lTarget').value * 100) / 100;
+      if (!rule.autoTarget && !(target > 0)) return toast('Set a target above 0');
       const f = period === 'week' ? 'weekly' : 'monthly';
-      if (!name) name = rule.defaultName(o, target, period === 'month' && rule.period && rule.period(src, 'month', today()).cycle ? 'pay cycle' : period, src);
+      if (!name) name = rule.defaultName(o, target, wordFor(period, o), src);
       data = { name, kind, freq: f, target, date, rule: Object.assign({ id: rule.id }, o) };
     }
     if (ex) { Object.assign(ex, data); if (kind === 'manual') delete ex.rule; }
