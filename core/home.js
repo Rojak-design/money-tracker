@@ -176,10 +176,15 @@ async function renderBackupInfo() {
 }
 async function refresh() {
   try {
+    const water = await Water.load();
     const money = await Rojak.load('money'), fitness = await Rojak.load('fitness');
     renderMoney(money);
     renderFitness(fitness);
-    try { renderHabits(await Rojak.load('habits'), { money, fitness }); } catch (err) {
+    try {
+      const habits = await Rojak.load('habits');
+      Water.setHabits(habits); // the bottles also celebrate when a Water habit's target is reached
+      renderHabits(habits, { money, fitness, water });
+    } catch (err) {
       console.error(err);
       $('#habitsSummary').innerHTML = '<div class="muted small" style="grid-column:1/-1">Tap to open Habits.</div>';
     }
@@ -203,7 +208,8 @@ $('#exportBtn').addEventListener('click', async () => {
   }
 });
 
-function openSheet(html) {
+function openSheet(html, title = 'Restore from backup') {
+  $('#sheetTitle').textContent = title;
   $('#sheetBody').innerHTML = html;
   $('#sheet').classList.remove('hidden');
   document.body.style.overflow = 'hidden';
@@ -332,16 +338,18 @@ function hello() { wave(); swish(); }
 $('#avatar').addEventListener('click', wave);
 $('#cat').addEventListener('click', swish);
 // Opening the app again after switching away says hello again.
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') hello(); });
+// (A new day also starts the water bottles at 0.)
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { Water.checkDay(); hello(); } });
 
 async function init() {
   const hair = hairForMonth(), cat = catForMonth();
   $('#avatar').innerHTML = avatarFigure(hair);
   $('#cat').innerHTML = catSVG(cat);
   setAvatarFavicon();
-  $('#today').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+  $('#today').textContent = new Date().toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }); // short, to leave room for the weather
   $('#hairNote').textContent = `This month: ${hair.name} hair and a ${cat.name} cat. They change every month.`;
   setTimeout(hello, 350);
+  if (!init.weather) { init.weather = true; Weather.start(); }
   await refresh();
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

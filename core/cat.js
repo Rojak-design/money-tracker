@@ -57,7 +57,10 @@ function catSVG(b = catForMonth()) {
     <ellipse cx="${x}" cy="49.4" rx="3.2" ry="5" fill="#26232b"/><circle cx="${x + 2}" cy="46.6" r="1.9" fill="#fff"/><circle cx="${x - 1.8}" cy="52" r=".8" fill="#fff"/>`).join('');
   const mouth = b.dark && !b.blaze ? '#d9cdd6' : deeper(b.muzzle || b.blaze || b.mask || b.base, .45);
   const pawFill = (f) => (f === b.base ? lighter(b.base, .12) : f);
-  const paw = (x, fill) => `<path d="M${x} 70V64.5Q${x} 59 ${x + 5.5} 59H${x + 11.5}Q${x + 17} 59 ${x + 17} 64.5V70Z" fill="${pawFill(fill)}"/>
+  // Paws rest on the card edge. With no outlines, a soft shaded edge (not a dark line) keeps them from blending
+  // into the face or the white card below.
+  const paw = (x, fill) => `<path d="M${x} 70V64.5Q${x} 59 ${x + 5.5} 59H${x + 11.5}Q${x + 17} 59 ${x + 17} 64.5V70" fill="none" stroke="rgba(60,40,50,.2)" stroke-width="2.6"/>
+    <path d="M${x} 70V64.5Q${x} 59 ${x + 5.5} 59H${x + 11.5}Q${x + 17} 59 ${x + 17} 64.5V70Z" fill="${pawFill(fill)}"/>
     <path d="M${x + 6} 65V68.5M${x + 11} 65V68.5" stroke="${deeper(pawFill(fill), .22)}" stroke-width="1.3" stroke-linecap="round"/>`;
   const tailColour = b.patchR || (b.name === 'Siamese' ? b.mask : b.base);
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-14 0 116 70" overflow="visible" class="${b.dark ? 'dark-cat' : ''}">

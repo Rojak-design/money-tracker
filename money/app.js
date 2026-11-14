@@ -166,12 +166,23 @@ document.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('c
 
 /* ---------- Rendering ---------- */
 function render() {
+  renderDue();
   renderAccounts();
   renderTx();
   renderRecon();
   if (typeof renderPlan === 'function') renderPlan();
   $('#currencyInput').value = state.settings.currency || '';
   renderPaySettings();
+  renderRemindSettings();
+}
+
+// Recurring payments due but not logged, at the top of the Accounts screen; also kept for notifications.
+function renderDue() {
+  const el = $('#dueList');
+  el.innerHTML = dueCardHtml();
+  bindDueCard(el);
+  const before = state.settings.remindFrom;
+  if (saveReminderList() || before !== state.settings.remindFrom) save();
 }
 
 function renderAccounts() {
@@ -593,7 +604,7 @@ function transferSheet(opts = {}) {
         <input id="xfAmt" type="number" inputmode="decimal" step="0.01" min="0.01" required placeholder="0.00" value="${amt ? (amt / 100).toFixed(2) : ''}">
       </label>
       <label>Date
-        <input id="xfDate" type="date" required value="${out ? out.date : today()}">
+        <input id="xfDate" type="date" required value="${out ? out.date : opts.date || today()}">
       </label>
       <label>Note (optional)
         <input id="xfNote" maxlength="100" placeholder="e.g. Salary to savings" value="${esc(userNote)}">
@@ -1203,6 +1214,52 @@ const paydayOptions = (withNone) => (withNone ? `<option value="0">Not set — u
   `<option value="last">Last day of the month</option>`;
 const readPayday = (v) => (v === 'last' ? 'last' : +v);
 
+/* ---------- Notifications for recurring payments that are due ---------- */
+// There's no server, so the phone itself checks: with Rojak installed on the home screen, Android (Chrome)
+// wakes the app's background helper a few times a day (periodic background sync), which notifies you of any
+// recurring payment that's due and not logged. Each payment is notified once.
+const canNotify = () => 'Notification' in window && 'serviceWorker' in navigator;
+async function setUpReminderChecks() {
+  if (!canNotify()) return 'none';
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (!('periodicSync' in reg)) return 'no-background';
+    await reg.periodicSync.register('recurring-due', { minInterval: 6 * 3600 * 1000 });
+    return 'ok';
+  } catch (err) {
+    console.warn(err);
+    return 'no-background';
+  }
+}
+let remindStatus = '';
+function renderRemindSettings() {
+  const on = !!state.settings.notify && canNotify() && Notification.permission === 'granted';
+  $('#remindInput').checked = on;
+  $('#remindInfo').textContent = !canNotify() ? 'This browser can’t show notifications. Recurring payments that are due are listed at the top of Accounts instead.'
+    : !on ? 'Payments that are due are always listed at the top of Accounts, with a Log button.'
+    : remindStatus === 'no-background' ? 'Notifications are on, but this browser can’t check in the background, so you’ll only see due payments when you open Rojak (at the top of Accounts). Background checks need Rojak installed on your home screen in Chrome on Android.'
+    : 'You’ll get a notification when a recurring payment is due and not logged. Your phone checks a few times a day in the background, so it can come a few hours after midnight on the due day (not between 10pm and 8am).';
+}
+$('#remindInput').addEventListener('change', async (e) => {
+  if (!e.target.checked) {
+    state.settings.notify = false;
+    try { const reg = await navigator.serviceWorker.ready; if (reg.periodicSync) await reg.periodicSync.unregister('recurring-due'); } catch (err) { /* nothing to undo */ }
+    await save(); renderRemindSettings(); return;
+  }
+  if (!canNotify()) { e.target.checked = false; return toast('This browser can’t show notifications'); }
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') {
+    e.target.checked = false;
+    return toast('Notifications are blocked — allow them for Rojak in your phone’s settings');
+  }
+  state.settings.notify = true;
+  await save();
+  remindStatus = await setUpReminderChecks();
+  renderRemindSettings();
+  const reg = await navigator.serviceWorker.ready;
+  reg.showNotification('Reminders are on', { body: 'Rojak will remind you to log recurring payments when they’re due.', icon: '../rojak-icon-192.png', tag: 'rojak-due-test' });
+});
+
 function renderPaySettings() {
   const sel = $('#paydayInput');
   if (!sel.options.length) sel.innerHTML = paydayOptions(true);
@@ -1481,6 +1538,7 @@ async function init() {
   // Ask the browser not to auto-delete our data.
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('../sw.js').catch(() => {});
+  if (state.settings.notify) setUpReminderChecks().then((st) => { remindStatus = st; renderRemindSettings(); }); // keep the background check registered
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
 else init();

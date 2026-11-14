@@ -14,10 +14,10 @@
   <meta name="apple-mobile-web-app-title" content="Rojak">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <!-- When app files change, bump ?v= here, in money/index.html, fitness/index.html, habits/index.html and the version in sw.js (keep them all the same). -->
-  <link rel="stylesheet" href="core/home.css?v=64">
+  <link rel="stylesheet" href="core/home.css?v=69">
 </head>
 <body>
-  <!-- She and the cat peek over the top edge of the Money card; the header's bottom is that edge. -->
+  <!-- She and the cat peek over the top edge of the first card (the water bottles); the header's bottom is that edge. -->
   <header class="home-top">
     <div class="peekers">
       <button type="button" id="cat" class="cat" aria-label="The cat (tap to see its tail swish)"></button>
@@ -27,9 +27,17 @@
       <h1>Rojak</h1>
       <div id="today" class="muted small"></div>
     </div>
+    <!-- Weather where you are (core/weather.js): tap for the next 12 hours -->
+    <button type="button" id="weather" class="weather empty" aria-label="Weather"></button>
   </header>
 
   <main>
+    <!-- Water tracker (core/water.js): not a module, just five bottles to fill through the day -->
+    <section class="card water-card" id="waterCard" aria-label="Water today">
+      <div class="bottles" id="bottles"></div>
+      <div class="water-count muted small" id="waterCount" aria-live="polite"></div>
+    </section>
+
     <!-- Money module: tap to open the money tracker -->
     <a class="card module-card" href="money/" id="moneyCard">
       <div class="module-head"><span class="module-icon">💰</span><h2>Money</h2><span class="open">Open ›</span></div>
@@ -92,11 +100,13 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="core/store.js?v=64"></script>
-  <script src="core/avatar.js?v=64"></script>
-  <script src="core/cat.js?v=64"></script>
-  <script src="habits/rules.js?v=64"></script>
-  <script src="habits/engine.js?v=64"></script>
-  <script src="core/home.js?v=64"></script>
+  <script src="core/store.js?v=69"></script>
+  <script src="core/avatar.js?v=69"></script>
+  <script src="core/weather.js?v=69"></script>
+  <script src="core/water.js?v=69"></script>
+  <script src="core/cat.js?v=69"></script>
+  <script src="habits/rules.js?v=69"></script>
+  <script src="habits/engine.js?v=69"></script>
+  <script src="core/home.js?v=69"></script>
 </body>
 </html>
