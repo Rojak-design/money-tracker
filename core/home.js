@@ -110,7 +110,9 @@ function renderFitness(f) {
   const d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
   const p = (n) => String(n).padStart(2, '0');
   const mon = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  const week = acts.filter((a) => a.date >= mon);
+  // Each category counts once a day (e.g. CrossFit's strength part and workout are one session).
+  const seen = new Set();
+  const week = acts.filter((a) => a.date >= mon).filter((a) => { const k = a.date + ' ' + a.catId; return !seen.has(k) && seen.add(k); });
   const cats = (f && f.categories) || [];
   const n = {};
   for (const a of week) n[a.catId] = (n[a.catId] || 0) + 1;

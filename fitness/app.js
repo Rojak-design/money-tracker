@@ -253,7 +253,11 @@ const dayActs = (iso) => state.activities.filter((a) => a.date === iso).sort(byT
 function weekStart(iso) { const d = dayDate(iso); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return isoDay(d); }
 function addDays(iso, n) { const d = dayDate(iso); d.setDate(d.getDate() + n); return isoDay(d); }
 // "🏋️ Strength 2 · 🏃 Easy run 3", in category order.
+// A category counts once a day: two CrossFit entries on one day (e.g. its strength part and its workout, recorded
+// separately in Garmin) are one CrossFit session.
+const oncePerDay = (acts) => { const seen = new Set(); return acts.filter((a) => { const k = a.date + ' ' + catOf(a.catId).id; return !seen.has(k) && seen.add(k); }); };
 function countChips(acts) {
+  acts = oncePerDay(acts);
   if (!acts.length) return '<span class="muted small">Nothing yet</span>';
   const n = {};
   for (const a of acts) n[catOf(a.catId).id] = (n[catOf(a.catId).id] || 0) + 1;
@@ -270,7 +274,7 @@ function renderCalendar() {
   let cells = '';
   for (let i = 0; i < lead; i++) cells += '<div class="day blank"></div>';
   for (let d = 1; d <= days; d++) {
-    const iso = `${calMonth}-${pad(d)}`, acts = dayActs(iso);
+    const iso = `${calMonth}-${pad(d)}`, acts = oncePerDay(dayActs(iso));
     cells += `<button type="button" class="day${iso === t ? ' today' : ''}${iso > t ? ' future' : ''}" data-day="${iso}" aria-label="${esc(niceDate(iso))}: ${acts.length ? esc(acts.map((a) => catOf(a.catId).name).join(', ')) : 'nothing'}">
       <span class="n">${d}</span><span class="marks">${acts.slice(0, 4).map((a) => { const c = catOf(a.catId); return `<span class="mark" style="--c:${c.color}" title="${esc(a.name)}">${c.icon}</span>`; }).join('')}${acts.length > 4 ? `<span class="more">+${acts.length - 4}</span>` : ''}</span></button>`;
   }
