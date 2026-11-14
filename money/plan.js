@@ -436,6 +436,9 @@ function paydayByRule(rule, y, m) {
   }
   return iso;
 }
+// The month each payday belongs to ('YYYY-MM'): the month it's paid for, even when it's moved back to the
+// Friday before a weekend (a 1 Nov payday paid on Fri 30 Oct is November's pay).
+const paydayMonth = {};
 // All paydays from a few months before to a few months after a date, sorted.
 function paydaysNear(iso) {
   const rules = paydayRules();
@@ -446,7 +449,7 @@ function paydaysNear(iso) {
     rules.forEach((r, i) => {
       const p = paydayByRule(r, mo.y, mo.m);
       const next = rules[i + 1];
-      if ((!r.from || p >= r.from) && (!next || p < next.from)) out.add(p);
+      if ((!r.from || p >= r.from) && (!next || p < next.from)) { out.add(p); paydayMonth[p] = isoOf(mo.y, mo.m, 1).slice(0, 7); }
     });
   }
   return [...out].sort();
@@ -455,8 +458,8 @@ const shortDate = (iso) => { const { y, m, d } = parseISO(iso); return new Date(
 function daysBetween(a, b) { const A = parseISO(a), B = parseISO(b); return Math.round((new Date(B.y, B.m - 1, B.d) - new Date(A.y, A.m - 1, A.d)) / 864e5); }
 
 function makePeriod(start, end) {
-  const mid = parseISO(addDaysISO(start, 14)); // label a cycle by the month most of it falls in
-  const key = isoOf(mid.y, mid.m, 1).slice(0, 7);
+  // A pay cycle is named after the month its pay comes in (25 Nov – 24 Dec is November); a calendar month by itself.
+  const key = (cycleMode() && paydayMonth[start]) || start.slice(0, 7);
   return {
     start, end, days: daysBetween(start, end) + 1,
     short: monthLabel(key).slice(0, 3),
