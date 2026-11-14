@@ -1,14 +1,16 @@
 /* Rojak — weather in the top-right corner of the home screen: an icon, the temperature and where you are.
 
    Location: the phone's location (asked once), rounded to about 1 km (2 decimal places) before it's used. It is
-   never saved or backed up; only the last forecast is kept on this phone (localStorage) so the corner still shows
-   something for a while when you're offline.
+   never saved or backed up; only the last forecast and place name are kept on this phone (localStorage) so the
+   corner still shows something for a while when you're offline.
 
    Sources (free, no sign-up; only the rounded location is sent):
      NEA 2-hour forecast (data.gov.sg)  in Singapore: about 47 named areas (Punggol, Sengkang…), updated every
                                         30 minutes; the area nearest to you gives the icon and the place name
      Open-Meteo hourly forecast         anywhere: the temperature, and the next 12 hours (icon, temperature,
                                         chance of rain); outside Singapore it also gives the corner icon
+     BigDataCloud place lookup          outside Singapore only: the district or town name (only the last one is
+                                        kept on the phone, so there's no history of places)
    Tap the corner for the next 12 hours. */
 'use strict';
 
@@ -109,6 +111,21 @@ const Weather = (() => {
     const vp = item.valid_period || item.validPeriod || {};
     return { area: best.name, text, night: /\(night\)/i.test(text), until: vp.end || null, updated: item.update_timestamp || item.updateTimestamp || item.timestamp || null };
   }
+  // Outside Singapore: the name of where you are (district or town, e.g. "Shibuya, Tokyo") from BigDataCloud's free
+  // lookup, sent only the rounded location. Only the last one is kept on the phone (no history of places), so
+  // it isn't looked up again while you stay in the same spot.
+  const PLACE = 'rojak-place';
+  async function placeName(lat, lon) {
+    const key = `${lat},${lon}`;
+    try { const p = JSON.parse(localStorage.getItem(PLACE) || 'null'); if (p && p.key === key) return p; } catch { /* look it up */ }
+    const j = await getJSON(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`);
+    const short = j.locality || j.city || j.principalSubdivision || j.countryName;
+    if (!short) throw new Error('no place name');
+    const wider = [j.city, j.principalSubdivision, j.countryName].find((x) => x && x !== short) || '';
+    const place = { key, short, full: wider ? `${short}, ${wider}` : short };
+    try { localStorage.setItem(PLACE, JSON.stringify(place)); } catch { /* fine */ }
+    return place;
+  }
   function locate() {
     return new Promise((resolve, reject) => {
       if (!navigator.geolocation) return reject(Object.assign(new Error('no location on this browser'), { code: 2 }));
@@ -150,19 +167,22 @@ const Weather = (() => {
     try {
       const { lat, lon } = await locate();
       const sg = inSingapore(lat, lon);
-      const [om, nn] = await Promise.allSettled([openMeteo(lat, lon), sg ? nea(lat, lon) : Promise.reject(new Error('outside SG'))]);
+      const [om, nn, pn] = await Promise.allSettled([openMeteo(lat, lon), sg ? nea(lat, lon) : Promise.reject(new Error('outside SG')),
+        sg ? Promise.reject(new Error('in SG')) : placeName(lat, lon)]);
+      const where = pn.status === 'fulfilled' ? pn.value : null;
       if (om.status !== 'fulfilled' && nn.status !== 'fulfilled') throw om.reason || nn.reason;
       const o = om.status === 'fulfilled' ? om.value : null, n = nn.status === 'fulfilled' ? nn.value : null;
       last = {
         at: Date.now(),
-        place: n ? n.area : 'Near you',
+        place: n ? n.area : where ? where.short : 'Near you',
+        placeFull: n ? n.area : where ? where.full : 'Near you',
         kind: n ? kindOfText(n.text) : kindOfCode(o.code),
         night: n ? (n.night || (o ? o.night : false)) : o.night,
         text: n ? tidyText(n.text) : CODE_TEXT[kindOfCode(o.code)],
         until: n ? n.until : null,
         temp: o ? o.temp : null,
         hours: o ? o.hours.map((x) => ({ time: x.time, temp: x.temp, kind: kindOfCode(x.code), night: x.night, rain: x.rain })) : [],
-        sources: [n ? 'NEA (data.gov.sg)' : '', o ? 'Open-Meteo' : ''].filter(Boolean)
+        sources: [n ? 'NEA (data.gov.sg)' : '', o ? 'Open-Meteo' : '', where ? 'place name: BigDataCloud' : ''].filter(Boolean)
       };
       writeCache(last);
       show(last);
@@ -196,8 +216,8 @@ const Weather = (() => {
         <div><div class="wx-temp-big">${roundT(w.temp)}</div><div><strong>${escW(w.text)}</strong>${w.until ? ` <span class="muted small">until ${escW(timeLabel(w.until))}</span>` : ''}</div></div></div>
       ${hours ? `<div class="label-t">Next 12 hours</div><div class="wx-hours">${hours}</div>` : ''}
       <p class="muted small">Updated ${escW(timeLabel(new Date(w.at).toISOString()))}${Date.now() - w.at > 3600 * 1000 ? ' (not updated recently — no internet?)' : ''} · ${escW(w.sources.join(' and '))}.
-        Your location is rounded to about 1 km and isn't saved.</p>
-      <button class="btn secondary" data-close>Close</button>`, `Weather · ${w.place}`);
+        Your location is rounded to about 1 km; only the last forecast and place name are kept on this phone.</p>
+      <button class="btn secondary" data-close>Close</button>`, `Weather · ${w.placeFull || w.place}`);
   }
 
   function start() {
