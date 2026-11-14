@@ -1,12 +1,13 @@
 # Rojak
 
-Rojak is a home screen that links to separate mini apps (modules): Money and Fitness so far. It runs in your phone's browser and can be
+Rojak is a home screen that links to separate mini apps (modules): Money, Fitness and Habits so far. It runs in your phone's browser and can be
 installed on your home screen. Plain HTML, CSS and JavaScript — no build step. **All data stays on your phone.**
 
 ## Home screen
 - **Money** card: what you spent today and your net total (the same total as on the Accounts screen: bank accounts minus the card bills due this month / pay cycle). Tap it to open the money tracker.
 - **Fitness** card: this week's sessions by category, your latest record (a new best lift or fastest run) and your latest recovery score. Tap it to open Fitness.
-- **Habits, Books / Music, Scheduler**: placeholders for modules to be built later.
+- **Habits**: tap to open the habit tracker (its summary on the home screen comes later).
+- **Books / Music, Scheduler**: placeholders for modules to be built later.
 - **Backup** (for the whole app, every module at once):
   - **Export backup**: one file with everything in Rojak (Money, Fitness…). Screenshots are never included, so the file stays small.
   - **Restore from backup**: shows what's in the file and what's on the phone for each module, and lets you tick which modules to bring back; the ticked ones are replaced, the others stay as they are. Older Money backup files (`money-backup-….json`) and earlier Rojak backups restore too (their screenshots are skipped).
@@ -62,6 +63,16 @@ Saved in the shared store under `mod:fitness`, every entry with its own `date` (
 `categories` (`{id, name, icon, color, words}`, in the order shown), `activities` (`{date, time, name, catId, source}`), `nameCats` (`{'activity name': catId}`, categories picked for a name), `lifts` (`{date, name, weightKg, reps}`), `runRecords` (`{date, distance: 5k|10k|half|full, timeSec}`),
 `bodyMeasurements` (`{date, weightKg, heightCm, bodyFatPct}`), `recoveryDays` (`{date, recoveryScore, hrvMs, restingHr, sleepHours, sleepScore, bodyBattery, sources}`). Empty numbers are saved as `null`. Workouts logged with the earlier version are kept in `workouts` / `workoutTypes` and shown on the calendar.
 
+## Habits module
+Violet, so it's easy to tell apart from Money and Fitness.
+- **+** adds a habit: a name, how often (**Daily**, **X times per week** or **X times per month**) and a **start date** (today unless you pick a past or future date). Tap a habit's name to edit or delete it.
+- Tick the round button for **done today**, or tap one of the last 7 days to tick or untick it. Days before the start date are greyed out and can't be ticked.
+- A habit with a future start date shows **Starts on [date]** until then.
+- Each habit shows its **streak** (days, weeks or months in a row that met the target; today / this week / this month only counts once it's met, and isn't a miss until it's over), its **best** streak and **Done %** (periods met ÷ periods finished since the start date). Weekly and monthly habits also show this week's or month's progress, e.g. "2 of 3 this week".
+- Weeks run Monday to Sunday; months are calendar months. When the start date falls part-way through a week or month, that first week or month counts if you met the target but isn't held against you if you didn't.
+
+Saved in the shared store under `mod:habits`, every entry with a date: `habits` (`{name, kind: 'manual', freq: daily|weekly|monthly, target, date (start date)}`), `checks` (`{habitId, date}`, one per day ticked).
+
 ## Publish with GitHub Pages
 1. On GitHub, open this repository → **Settings** → **Pages**.
 2. Under **Build and deployment**, set Source to **Deploy from a branch**.
@@ -85,7 +96,8 @@ On iPhone, the home-screen app and Safari keep separate data — use the home-sc
 - `core/cat.js` – the cat and its monthly breeds
 - `money/` – the money tracker: `index.html`, `style.css`, `app.js` (accounts, transactions, categories, reconciliation, settings), `plan.js` (recurring payments, savings projects, trips and the forecast)
 - `fitness/` – the fitness module: `index.html`, `style.css`, `app.js` (calendar and categories, records, body measurements, recovery), `import.js` (reading screenshots)
+- `habits/` – the habits module: `index.html`, `style.css`, `app.js` (habits, ticks, streaks and completion)
 - `money/ocr/` – Tesseract.js (Apache 2.0, licences included) for reading screenshots (Money balances and receipts, Fitness imports); loaded only when you pick a screenshot
 - `manifest.json`, `sw.js`, `rojak-icon*`, `rojak-apple-touch-icon.png` – make it installable and work offline (`icon-v2.svg`, `apple-touch-icon-v2.png` are the money tracker's own tab icon)
 
-When you change any file, bump `VERSION` in `sw.js` and the matching `?v=` numbers in `index.html`, `money/index.html` and `fitness/index.html` (keep them all the same) so phones pick up the update with all files matching.
+When you change any file, bump `VERSION` in `sw.js` and the matching `?v=` numbers in `index.html`, `money/index.html`, `fitness/index.html` and `habits/index.html` (keep them all the same) so phones pick up the update with all files matching.
